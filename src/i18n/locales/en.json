@@ -1553,6 +1553,25 @@
           "feature1": "Use your own ComfyUI instance",
           "feature2": "Cost-free advanced generative edits",
           "feature3": "Custom workflow selection",
+          "remoteMask": {
+            "address": "Remote mask gateway",
+            "addressDesc": "Optional — defaults to the AI backend address",
+            "agenticDefault": "Agentic refinement by default",
+            "agenticDefaultDesc": "New AI masking operations start with agentic refinement enabled.",
+            "backend": "Segmentation backend",
+            "backendOptions": {
+              "sam2": "SAM2 (mask_hq)",
+              "sam3": "SAM3 (newest)"
+            },
+            "includeRrdata": "Send edit sidecar (.rrdata) as hints",
+            "includeRrdataDesc": "Include your current edit sidecar with mask requests so the gateway can use it as a hint.",
+            "includeRrdataTitle": "Edit sidecar hints",
+            "payload": "Mask payload",
+            "payloadOptions": {
+              "raw": "RAW (best effort)",
+              "tiff": "TIFF (exact)"
+            }
+          },
           "success": "Connection successful!",
           "test": "Test",
           "testing": "Testing...",

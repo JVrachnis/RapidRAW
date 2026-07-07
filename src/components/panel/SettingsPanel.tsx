@@ -520,6 +520,7 @@ export default function SettingsPanel({
 
   const [aiProvider, setAiProvider] = useState(appSettings?.aiProvider || 'cpu');
   const [aiConnectorAddress, setAiConnectorAddress] = useState<string>(appSettings?.aiConnectorAddress || '');
+  const [remoteMaskAddress, setRemoteMaskAddress] = useState<string>(appSettings?.remoteMaskAddress || '');
   const [newShortcut, setNewShortcut] = useState('');
   const [newAiTag, setNewAiTag] = useState('');
 
@@ -603,6 +604,22 @@ export default function SettingsPanel({
     [t],
   );
 
+  const remoteMaskPayloadOptions = useMemo<OptionItem<string>[]>(
+    () => [
+      { value: 'tiff', label: t('settings.processing.ai.connector.remoteMask.payloadOptions.tiff') },
+      { value: 'raw', label: t('settings.processing.ai.connector.remoteMask.payloadOptions.raw') },
+    ],
+    [t],
+  );
+
+  const remoteMaskBackendOptions = useMemo<OptionItem<string>[]>(
+    () => [
+      { value: 'sam2', label: t('settings.processing.ai.connector.remoteMask.backendOptions.sam2') },
+      { value: 'sam3', label: t('settings.processing.ai.connector.remoteMask.backendOptions.sam3') },
+    ],
+    [t],
+  );
+
   const fontOptions = useMemo<OptionItem<string>[]>(
     () => [
       { value: 'poppins', label: t('settings.general.poppins') },
@@ -633,6 +650,9 @@ export default function SettingsPanel({
   useEffect(() => {
     if (appSettings?.aiConnectorAddress !== aiConnectorAddress) {
       setAiConnectorAddress(appSettings?.aiConnectorAddress || '');
+    }
+    if (appSettings?.remoteMaskAddress !== remoteMaskAddress) {
+      setRemoteMaskAddress(appSettings?.remoteMaskAddress || '');
     }
     if (appSettings?.aiProvider !== aiProvider) {
       setAiProvider(appSettings?.aiProvider || 'cpu');
@@ -2162,6 +2182,68 @@ export default function SettingsPanel({
                                   {testStatus.message}
                                 </Text>
                               )}
+                            </SettingItem>
+
+                            <SettingItem
+                              label={t('settings.processing.ai.connector.remoteMask.address')}
+                              description={t('settings.processing.ai.connector.remoteMask.addressDesc')}
+                            >
+                              <Input
+                                id="remote-mask-address"
+                                onBlur={() => onSettingsChange({ ...appSettings, remoteMaskAddress: remoteMaskAddress })}
+                                onChange={(e: any) => setRemoteMaskAddress(e.target.value)}
+                                onKeyDown={(e: any) => e.stopPropagation()}
+                                placeholder="127.0.0.1:5000"
+                                type="text"
+                                value={remoteMaskAddress}
+                                bgClassName="bg-bg-primary"
+                              />
+                            </SettingItem>
+
+                            <SettingItem label={t('settings.processing.ai.connector.remoteMask.payload')}>
+                              <Dropdown
+                                onChange={(value: any) => onSettingsChange({ ...appSettings, remoteMaskPayload: value })}
+                                options={remoteMaskPayloadOptions}
+                                value={appSettings?.remoteMaskPayload || 'tiff'}
+                                triggerClassName="bg-bg-primary"
+                              />
+                            </SettingItem>
+
+                            <SettingItem
+                              label={t('settings.processing.ai.connector.remoteMask.includeRrdataTitle')}
+                              description={t('settings.processing.ai.connector.remoteMask.includeRrdataDesc')}
+                            >
+                              <Switch
+                                checked={appSettings?.remoteMaskIncludeRrdata ?? true}
+                                id="remote-mask-include-rrdata-toggle"
+                                label={t('settings.processing.ai.connector.remoteMask.includeRrdata')}
+                                onChange={(checked) =>
+                                  onSettingsChange({ ...appSettings, remoteMaskIncludeRrdata: checked })
+                                }
+                              />
+                            </SettingItem>
+
+                            <SettingItem label={t('settings.processing.ai.connector.remoteMask.backend')}>
+                              <Dropdown
+                                onChange={(value: any) => onSettingsChange({ ...appSettings, remoteMaskBackend: value })}
+                                options={remoteMaskBackendOptions}
+                                value={appSettings?.remoteMaskBackend || 'sam2'}
+                                triggerClassName="bg-bg-primary"
+                              />
+                            </SettingItem>
+
+                            <SettingItem
+                              label={t('settings.processing.ai.connector.remoteMask.agenticDefault')}
+                              description={t('settings.processing.ai.connector.remoteMask.agenticDefaultDesc')}
+                            >
+                              <Switch
+                                checked={appSettings?.remoteMaskAgenticDefault ?? false}
+                                id="remote-mask-agentic-default-toggle"
+                                label={t('settings.processing.ai.connector.remoteMask.agenticDefault')}
+                                onChange={(checked) =>
+                                  onSettingsChange({ ...appSettings, remoteMaskAgenticDefault: checked })
+                                }
+                              />
                             </SettingItem>
                           </div>
                         </motion.div>
