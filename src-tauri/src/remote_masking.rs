@@ -8,7 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use image::codecs::tiff::TiffEncoder;
-use image::{DynamicImage, ExtendedColorType, ImageEncoder};
+use image::{DynamicImage, ExtendedColorType, ImageEncoder, ImageFormat};
 use reqwest::multipart;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -76,6 +76,101 @@ pub struct GatewayMaskResult {
 
 fn default_alignment() -> String {
     "exact".to_string()
+}
+
+/// Un-orient a point from ORIENTED display space (where the frontend captures
+/// clicks/paint, with width/height swapped for `steps` 1/3) into the coarse-
+/// UNROTATED payload space that the uploaded TIFF actually lives in.
+///
+/// This is exactly the inverse of the RETURNED-mask transform in
+/// `mask_generation::generate_ai_bitmap_from_full_mask`: that path samples the
+/// received (unoriented) mask for each oriented output pixel via a flip-then-
+/// orientation-match; here we apply that identical oriented -> unoriented map
+/// so the OUTBOUND spatial inputs (points, ROI) match the payload the gateway
+/// segments. `oriented_w`/`oriented_h` are the oriented display dims
+/// (== `coarse_rotated_w`/`coarse_rotated_h` in the inbound code).
+pub fn unorient_point(
+    x: f64,
+    y: f64,
+    oriented_w: f64,
+    oriented_h: f64,
+    steps: u8,
+    flip_h: bool,
+    flip_v: bool,
+) -> (f64, f64) {
+    // Flip is undone first, in oriented (coarse-rotated) space, matching the
+    // inbound order (flip on x_unrotated -> x_unflipped, then the match).
+    let x_unflipped = if flip_h { oriented_w - x } else { x };
+    let y_unflipped = if flip_v { oriented_h - y } else { y };
+    match steps % 4 {
+        0 => (x_unflipped, y_unflipped),
+        1 => (y_unflipped, oriented_w - x_unflipped),
+        2 => (oriented_w - x_unflipped, oriented_h - y_unflipped),
+        3 => (oriented_h - y_unflipped, x_unflipped),
+        _ => unreachable!(),
+    }
+}
+
+/// Un-orient an ROI mask PNG from ORIENTED display space into coarse-UNROTATED
+/// payload space, the raster analogue of [`unorient_point`]: decode, apply the
+/// inverse orientation (flip first, then rotation) via `image::imageops`,
+/// re-encode PNG. No-op fast path for `steps == 0 && !flip_h && !flip_v`.
+pub fn unorient_roi_png(
+    png_bytes: &[u8],
+    steps: u8,
+    flip_h: bool,
+    flip_v: bool,
+) -> Result<Vec<u8>, String> {
+    use image::imageops;
+    let img = image::load_from_memory(png_bytes).map_err(|e| e.to_string())?;
+    let mut img = img;
+    // Flip first (oriented space), mirroring unorient_point's order.
+    if flip_h {
+        img = DynamicImage::ImageRgba8(imageops::flip_horizontal(&img));
+    }
+    if flip_v {
+        img = DynamicImage::ImageRgba8(imageops::flip_vertical(&img));
+    }
+    // Then the inverse orientation rotation. steps is the number of CW quarter
+    // turns applied to the UNORIENTED image to reach the oriented display; the
+    // inverse (oriented -> unoriented) rotates the opposite way.
+    let out = match steps % 4 {
+        0 => img,
+        1 => DynamicImage::ImageRgba8(imageops::rotate270(&img)),
+        2 => DynamicImage::ImageRgba8(imageops::rotate180(&img)),
+        3 => DynamicImage::ImageRgba8(imageops::rotate90(&img)),
+        _ => unreachable!(),
+    };
+    let mut buf = Cursor::new(Vec::new());
+    out.write_to(&mut buf, ImageFormat::Png)
+        .map_err(|e| e.to_string())?;
+    Ok(buf.into_inner())
+}
+
+/// Un-orient an ROI mask supplied as base64 (optionally a `data:image/png;
+/// base64,...` data URL): strip any prefix, decode, un-orient via
+/// [`unorient_roi_png`], re-encode, and re-wrap with the same prefix style the
+/// caller used. Returns bare/prefixed base64 matching the input.
+pub fn unorient_roi_b64(
+    roi: &str,
+    steps: u8,
+    flip_h: bool,
+    flip_v: bool,
+) -> Result<String, String> {
+    use base64::{engine::general_purpose, Engine as _};
+    let (prefix, b64) = match roi.find(',') {
+        Some(idx) if roi.starts_with("data:") => (Some(&roi[..=idx]), &roi[idx + 1..]),
+        _ => (None, roi),
+    };
+    let bytes = general_purpose::STANDARD
+        .decode(b64.trim())
+        .map_err(|e| e.to_string())?;
+    let out = unorient_roi_png(&bytes, steps, flip_h, flip_v)?;
+    let encoded = general_purpose::STANDARD.encode(out);
+    Ok(match prefix {
+        Some(p) => format!("{}{}", p, encoded),
+        None => encoded,
+    })
 }
 
 /// Encode an image as a 16-bit linear RGB TIFF for lossless upload to the gateway.
@@ -354,6 +449,16 @@ pub async fn generate_remote_ai_mask(
     // masks use). For "raw" payloads we still fetch it, purely to report
     // client dims so the gateway can reconcile against the original RAW.
     let warped_image = get_cached_full_warped_image(&state, &request.js_adjustments)?;
+    // The warped image is the coarse-UNROTATED payload space. The frontend
+    // captured points/ROI in ORIENTED display space, whose dims are swapped for
+    // odd orientation_steps. Derive the oriented dims so we can un-orient the
+    // outbound spatial inputs back into payload space (see unorient_point).
+    let (unoriented_w, unoriented_h) = (warped_image.width(), warped_image.height());
+    let (oriented_w, oriented_h) = if request.orientation_steps % 2 == 1 {
+        (unoriented_h as f64, unoriented_w as f64)
+    } else {
+        (unoriented_w as f64, unoriented_h as f64)
+    };
     let client_dims = if payload_mode == "raw" {
         Some((warped_image.width(), warped_image.height()))
     } else {
@@ -378,12 +483,52 @@ pub async fn generate_remote_ai_mask(
     )
     .await?;
 
+    // ---- un-orient outbound spatial inputs to payload space ----
+    // The uploaded payload lives in coarse-UNROTATED space; the frontend's
+    // points/ROI are in ORIENTED display space. Transform both to match (no-op
+    // when steps==0 && no flips). The RETURNED mask is un-oriented downstream
+    // by generate_ai_bitmap_from_full_mask, so only the outbound side needs it.
+    let needs_unorient = request.orientation_steps % 4 != 0
+        || request.flip_horizontal
+        || request.flip_vertical;
+
+    let unoriented_points = request.points.as_ref().map(|pts| {
+        pts.iter()
+            .map(|p| {
+                let (ux, uy) = unorient_point(
+                    p[0],
+                    p[1],
+                    oriented_w,
+                    oriented_h,
+                    request.orientation_steps,
+                    request.flip_horizontal,
+                    request.flip_vertical,
+                );
+                [ux, uy, p[2]]
+            })
+            .collect::<Vec<[f64; 3]>>()
+    });
+
+    let unoriented_roi = if needs_unorient {
+        match request.roi_mask_b64.as_ref() {
+            Some(roi) => Some(unorient_roi_b64(
+                roi,
+                request.orientation_steps,
+                request.flip_horizontal,
+                request.flip_vertical,
+            )?),
+            None => None,
+        }
+    } else {
+        request.roi_mask_b64.clone()
+    };
+
     // ---- enqueue (with single transparent retry on 410 Gone) ----
     let params = MaskJobParams {
         mode: request.mode.clone(),
         query: request.query.clone(),
-        points: request.points.clone(),
-        roi_mask_b64: request.roi_mask_b64.clone(),
+        points: unoriented_points,
+        roi_mask_b64: unoriented_roi,
         preset: request.preset.clone(),
         agentic: Some(
             request
@@ -760,5 +905,185 @@ mod tests {
             map.get("hash0").map(String::as_str),
             Some("sid0-updated")
         );
+    }
+
+    // --- geometry: un-orient outbound points/ROI to payload (unoriented) space ---
+
+    /// Mirror of the INBOUND orientation math in
+    /// `mask_generation::generate_ai_bitmap_from_full_mask` (scale=1, no crop,
+    /// no fine rotation): given an ORIENTED display point and the oriented
+    /// dims, produce the UNORIENTED (payload) point. `unorient_point` must be
+    /// exactly this function; the round-trip below composes the two and must
+    /// recover the identity.
+    fn inbound_oriented_to_unoriented(
+        xo: f64,
+        yo: f64,
+        oriented_w: f64,
+        oriented_h: f64,
+        steps: u8,
+        flip_h: bool,
+        flip_v: bool,
+    ) -> (f64, f64) {
+        // Flip is applied first, in oriented (coarse-rotated) space.
+        let x_unflipped = if flip_h { oriented_w - xo } else { xo };
+        let y_unflipped = if flip_v { oriented_h - yo } else { yo };
+        // Then the orientation match maps oriented -> unoriented coarse.
+        // Note: oriented_w == coarse_rotated_w, oriented_h == coarse_rotated_h.
+        match steps {
+            0 => (x_unflipped, y_unflipped),
+            1 => (y_unflipped, oriented_w - x_unflipped),
+            2 => (oriented_w - x_unflipped, oriented_h - y_unflipped),
+            3 => (oriented_h - y_unflipped, x_unflipped),
+            _ => (x_unflipped, y_unflipped),
+        }
+    }
+
+    #[test]
+    fn unorient_point_is_noop_for_steps0_no_flip() {
+        for &(x, y) in &[(0.0, 0.0), (10.0, 20.0), (5999.0, 3999.0)] {
+            let (ux, uy) = unorient_point(x, y, 6000.0, 4000.0, 0, false, false);
+            assert!((ux - x).abs() < 1e-9 && (uy - y).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn unorient_point_maps_oriented_corners_to_payload_corners() {
+        // Unoriented payload is 4000x6000 (portrait). For steps=1 and steps=3
+        // the oriented display is 6000x4000 (landscape); for steps=0/2 it stays
+        // 4000x6000. Corner-to-corner checks pin the exact rotation direction.
+        // steps=1: oriented 6000x4000 -> unoriented 4000x6000
+        let (ux, uy) = unorient_point(0.0, 0.0, 6000.0, 4000.0, 1, false, false);
+        assert!((ux - 0.0).abs() < 0.5 && (uy - 6000.0).abs() < 0.5);
+        let (ux, uy) = unorient_point(6000.0, 0.0, 6000.0, 4000.0, 1, false, false);
+        assert!((ux - 0.0).abs() < 0.5 && (uy - 0.0).abs() < 0.5);
+        // steps=2: 180, dims unchanged (say 4000x6000 oriented)
+        let (ux, uy) = unorient_point(0.0, 0.0, 4000.0, 6000.0, 2, false, false);
+        assert!((ux - 4000.0).abs() < 0.5 && (uy - 6000.0).abs() < 0.5);
+        // steps=3: oriented 6000x4000 -> unoriented 4000x6000
+        let (ux, uy) = unorient_point(0.0, 0.0, 6000.0, 4000.0, 3, false, false);
+        assert!((ux - 4000.0).abs() < 0.5 && (uy - 0.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn unorient_point_roundtrips_with_inbound_for_all_steps_and_flips() {
+        // For each steps/flip combo: un-orient an oriented point to payload
+        // space, then feed it back through the inbound math and require the
+        // original oriented point (within 0.5px).
+        let cases: &[(f64, f64, f64, f64, u8)] = &[
+            (6000.0, 4000.0, 6000.0, 4000.0, 0), // oriented == unoriented dims
+            (6000.0, 4000.0, 4000.0, 6000.0, 1), // 90: swapped
+            (4000.0, 6000.0, 4000.0, 6000.0, 2), // 180: unchanged
+            (6000.0, 4000.0, 4000.0, 6000.0, 3), // 270: swapped
+        ];
+        for &(ow, oh, _uw, _uh, steps) in cases {
+            for &(flip_h, flip_v) in &[(false, false), (true, false), (false, true), (true, true)] {
+                for &(xo, yo) in &[(0.0, 0.0), (123.5, 987.25), (ow - 1.0, oh - 1.0), (ow / 2.0, oh / 3.0)] {
+                    let (ux, uy) = unorient_point(xo, yo, ow, oh, steps, flip_h, flip_v);
+                    let (rx, ry) =
+                        inbound_oriented_to_unoriented(xo, yo, ow, oh, steps, flip_h, flip_v);
+                    // unorient_point IS the inbound oriented->unoriented map.
+                    assert!(
+                        (ux - rx).abs() < 0.5 && (uy - ry).abs() < 0.5,
+                        "steps={steps} flip=({flip_h},{flip_v}) pt=({xo},{yo}): got ({ux},{uy}) want ({rx},{ry})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Build a tiny grayscale PNG with a single white pixel at (px, py).
+    fn png_with_white_pixel(w: u32, h: u32, px: u32, py: u32) -> Vec<u8> {
+        let mut img = image::GrayImage::new(w, h);
+        img.put_pixel(px, py, image::Luma([255]));
+        let mut buf = Cursor::new(Vec::new());
+        image::DynamicImage::ImageLuma8(img)
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .unwrap();
+        buf.into_inner()
+    }
+
+    /// Find the (x, y) of the (first) white pixel in a decoded grayscale PNG.
+    fn white_pixel_of(png: &[u8]) -> (u32, u32) {
+        let img = image::load_from_memory(png).unwrap().to_luma8();
+        for y in 0..img.height() {
+            for x in 0..img.width() {
+                if img.get_pixel(x, y).0[0] > 127 {
+                    return (x, y);
+                }
+            }
+        }
+        panic!("no white pixel found");
+    }
+
+    #[test]
+    fn unorient_roi_png_moves_white_pixel_to_payload_position() {
+        // Oriented ROI is 3x2 (steps 0/2) or 3x2 -> 2x3 (steps 1/3).
+        // The white pixel must land where unorient_point predicts.
+        let (ow, oh) = (3u32, 2u32);
+        for steps in 0u8..4 {
+            for &(flip_h, flip_v) in &[(false, false), (true, false), (false, true)] {
+                let (px, py) = (2u32, 0u32); // oriented top-right pixel
+                let png = png_with_white_pixel(ow, oh, px, py);
+                let out = unorient_roi_png(&png, steps, flip_h, flip_v).unwrap();
+
+                // Predict via the pixel-centered point transform.
+                let (fx, fy) = unorient_point(
+                    px as f64 + 0.5,
+                    py as f64 + 0.5,
+                    ow as f64,
+                    oh as f64,
+                    steps,
+                    flip_h,
+                    flip_v,
+                );
+                let (ux, uy) = white_pixel_of(&out);
+                let ex = fx.floor().max(0.0) as u32;
+                let ey = fy.floor().max(0.0) as u32;
+                assert_eq!(
+                    (ux, uy),
+                    (ex, ey),
+                    "steps={steps} flip=({flip_h},{flip_v}): white at ({ux},{uy}) want ({ex},{ey})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn unorient_roi_png_is_noop_for_steps0_no_flip() {
+        let png = png_with_white_pixel(3, 2, 2, 0);
+        let out = unorient_roi_png(&png, 0, false, false).unwrap();
+        assert_eq!(white_pixel_of(&out), (2, 0));
+        let dims = image::load_from_memory(&out).unwrap();
+        assert_eq!((dims.width(), dims.height()), (3, 2));
+    }
+
+    #[test]
+    fn unorient_roi_b64_preserves_data_url_prefix_and_transforms() {
+        use base64::{engine::general_purpose, Engine as _};
+        let png = png_with_white_pixel(3, 2, 2, 0);
+        let data_url = format!(
+            "data:image/png;base64,{}",
+            general_purpose::STANDARD.encode(&png)
+        );
+        // steps=1 must actually move the pixel and keep the data-URL prefix.
+        let out = unorient_roi_b64(&data_url, 1, false, false).unwrap();
+        assert!(out.starts_with("data:image/png;base64,"));
+        let decoded = general_purpose::STANDARD
+            .decode(out.split(',').nth(1).unwrap())
+            .unwrap();
+        let (ux, uy) = white_pixel_of(&decoded);
+        let (fx, fy) = unorient_point(2.5, 0.5, 3.0, 2.0, 1, false, false);
+        assert_eq!((ux, uy), (fx.floor() as u32, fy.floor() as u32));
+    }
+
+    #[test]
+    fn unorient_roi_b64_handles_bare_base64() {
+        use base64::{engine::general_purpose, Engine as _};
+        let png = png_with_white_pixel(3, 2, 2, 0);
+        let bare = general_purpose::STANDARD.encode(&png);
+        let out = unorient_roi_b64(&bare, 0, false, false).unwrap();
+        assert!(!out.starts_with("data:"));
+        let decoded = general_purpose::STANDARD.decode(&out).unwrap();
+        assert_eq!(white_pixel_of(&decoded), (2, 0));
     }
 }

@@ -9,26 +9,6 @@ import { Adjustments, MaskContainer } from '../utils/adjustments';
 import { SubMask } from '../components/panel/right/Masks';
 import { Invokes } from '../components/ui/AppProperties';
 
-const getTransformAdjustments = (adj: Adjustments) => ({
-  transformDistortion: adj.transformDistortion,
-  transformVertical: adj.transformVertical,
-  transformHorizontal: adj.transformHorizontal,
-  transformRotate: adj.transformRotate,
-  transformAspect: adj.transformAspect,
-  transformScale: adj.transformScale,
-  transformXOffset: adj.transformXOffset,
-  transformYOffset: adj.transformYOffset,
-  lensDistortionAmount: adj.lensDistortionAmount,
-  lensVignetteAmount: adj.lensVignetteAmount,
-  lensTcaAmount: adj.lensTcaAmount,
-  lensDistortionParams: adj.lensDistortionParams,
-  lensMaker: adj.lensMaker,
-  lensModel: adj.lensModel,
-  lensDistortionEnabled: adj.lensDistortionEnabled,
-  lensTcaEnabled: adj.lensTcaEnabled,
-  lensVignetteEnabled: adj.lensVignetteEnabled,
-});
-
 export type RemoteMaskStage = 'uploading' | 'queued' | 'running' | 'done' | 'error';
 
 export interface RemoteMaskStatus {
@@ -139,7 +119,10 @@ export function useRemoteAiMasking() {
       }));
 
       try {
-        const jsAdjustments = getTransformAdjustments(adjustments);
+        // Pass the FULL adjustments object (mirroring useAiMasking's invokes):
+        // the warped-image cache in get_cached_full_warped_image hashes the
+        // complete adjustments (incl. aiPatches), so a truncated transform-only
+        // object risks a cache-key collision that returns a stale image.
         const newParameters: any = await invoke(Invokes.GenerateRemoteAiMask, {
           request: {
             subMaskId: subMask.id,
@@ -155,11 +138,39 @@ export function useRemoteAiMasking() {
             flipHorizontal: adjustments.flipHorizontal,
             flipVertical: adjustments.flipVertical,
             orientationSteps: adjustments.orientationSteps,
-            jsAdjustments,
+            jsAdjustments: adjustments,
           },
         });
 
-        const mergedParameters = { ...(subMask.parameters || {}), ...newParameters };
+        // Merge back ONLY the mask geometry/result fields. The gateway echoes
+        // request-memory fields (mode/query/preset/agentic/backend) which
+        // already live in the sub-mask's parameters from the live UI; merging
+        // them here would clobber a query the user edited mid-job.
+        const {
+          maskDataBase64,
+          rotation,
+          flipHorizontal,
+          flipVertical,
+          orientationSteps,
+          alignment,
+          labels,
+          width,
+          height,
+          timings,
+        } = newParameters || {};
+        const resultFields = {
+          maskDataBase64,
+          rotation,
+          flipHorizontal,
+          flipVertical,
+          orientationSteps,
+          alignment,
+          labels,
+          width,
+          height,
+          timings,
+        };
+        const mergedParameters = { ...(subMask.parameters || {}), ...resultFields };
         updateSubMask(subMask.id, { parameters: mergedParameters });
 
         if (Array.isArray(newParameters?.labels) && newParameters.labels.length > 0) {
