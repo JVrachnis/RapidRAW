@@ -2216,6 +2216,8 @@ pub fn run() {
             full_transformed_cache: Mutex::new(None),
             decoded_image_cache: Mutex::new(DecodedImageCache::new(5)),
             thumbnail_manager: ThumbnailManager::new(),
+            remote_mask_source_memo: Mutex::new(None),
+            remote_mask_current_job: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             apply_adjustments,
@@ -2254,6 +2256,9 @@ pub fn run() {
             ai_commands::check_ai_connector_status,
             ai_commands::test_ai_connector_connection,
             ai_commands::invoke_generative_replace_with_mask_def,
+            remote_masking::generate_remote_ai_mask,
+            remote_masking::cancel_remote_ai_mask,
+            remote_masking::check_remote_mask_backend,
             denoising::apply_denoising,
             denoising::batch_denoise_images,
             denoising::save_denoised_image,
