@@ -147,4 +147,6 @@ pub struct AppState {
     pub full_transformed_cache: Mutex<Option<TransformedImageCache>>,
     pub decoded_image_cache: Mutex<DecodedImageCache>,
     pub thumbnail_manager: Arc<ThumbnailManager>,
+    pub remote_mask_source_memo: Mutex<Option<(String, String)>>, // (blake3 hex, gateway source_id)
+    pub remote_mask_current_job: Mutex<Option<String>>,
 }
