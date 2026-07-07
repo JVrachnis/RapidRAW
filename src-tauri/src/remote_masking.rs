@@ -397,93 +397,97 @@ pub async fn generate_remote_ai_mask(
     }
 
     // ---- poll ----
-    let mut delay = std::time::Duration::from_millis(500);
-    loop {
-        tokio::time::sleep(delay).await;
-        delay = std::cmp::min(delay * 2, std::time::Duration::from_secs(2));
-        let mut req = client.get(format!("{}/jobs/{}", base, job.job_id));
-        if let Some(t) = token.as_deref() {
-            req = req.bearer_auth(t);
-        }
-        let st: JobStatus = req
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .json()
-            .await
-            .map_err(|e| e.to_string())?;
-        match st.status.as_str() {
-            "queued" | "running" => {
-                emit_status(
-                    &app_handle,
-                    MaskStatusEvent {
-                        sub_mask_id: request.sub_mask_id.clone(),
-                        stage: st.status.clone(),
-                        queue_position: st.queue_position,
-                        progress: st.progress,
-                        detail: None,
-                    },
-                );
+    // The whole polling section is wrapped in an inner async block so that,
+    // regardless of which path it exits through (success, cancellation,
+    // terminal error, or a transient network/deserialize error via `?`),
+    // `remote_mask_current_job` is cleared exactly once, unconditionally,
+    // right after the block finishes. This avoids leaving a stale job id in
+    // AppState if a poll request itself fails.
+    let outcome: Result<Value, String> = async {
+        let mut delay = std::time::Duration::from_millis(500);
+        loop {
+            tokio::time::sleep(delay).await;
+            delay = std::cmp::min(delay * 2, std::time::Duration::from_secs(2));
+            let mut req = client.get(format!("{}/jobs/{}", base, job.job_id));
+            if let Some(t) = token.as_deref() {
+                req = req.bearer_auth(t);
             }
-            "done" => {
-                let r = st.result.ok_or("done without result")?;
-                emit_status(
-                    &app_handle,
-                    MaskStatusEvent {
-                        sub_mask_id: request.sub_mask_id.clone(),
-                        stage: "done".into(),
-                        queue_position: None,
-                        progress: Some(1.0),
-                        detail: None,
-                    },
-                );
-                {
-                    let mut cur = state.remote_mask_current_job.lock().unwrap();
-                    *cur = None;
+            let st: JobStatus = req
+                .send()
+                .await
+                .map_err(|e| e.to_string())?
+                .json()
+                .await
+                .map_err(|e| e.to_string())?;
+            match st.status.as_str() {
+                "queued" | "running" => {
+                    emit_status(
+                        &app_handle,
+                        MaskStatusEvent {
+                            sub_mask_id: request.sub_mask_id.clone(),
+                            stage: st.status.clone(),
+                            queue_position: st.queue_position,
+                            progress: st.progress,
+                            detail: None,
+                        },
+                    );
                 }
-                return Ok(serde_json::json!({
-                    "maskDataBase64": format!("data:image/png;base64,{}", r.mask_png_b64),
-                    "rotation": request.rotation,
-                    "flipHorizontal": request.flip_horizontal,
-                    "flipVertical": request.flip_vertical,
-                    "orientationSteps": request.orientation_steps,
-                    "mode": request.mode,
-                    "query": request.query,
-                    "preset": request.preset,
-                    "agentic": params.agentic,
-                    "backend": params.backend,
-                    "alignment": r.alignment,
-                    "labels": r.labels,
-                }));
-            }
-            "cancelled" => {
-                let mut cur = state.remote_mask_current_job.lock().unwrap();
-                *cur = None;
-                return Err("cancelled".into());
-            }
-            _ => {
-                let detail = st
-                    .error
-                    .as_ref()
-                    .and_then(|e| e.get("kind").and_then(|k| k.as_str()))
-                    .unwrap_or("error")
-                    .to_string();
-                emit_status(
-                    &app_handle,
-                    MaskStatusEvent {
-                        sub_mask_id: request.sub_mask_id.clone(),
-                        stage: "error".into(),
-                        queue_position: None,
-                        progress: None,
-                        detail: Some(detail.clone()),
-                    },
-                );
-                let mut cur = state.remote_mask_current_job.lock().unwrap();
-                *cur = None;
-                return Err(format!("mask job failed: {} — {:?}", detail, st.error));
+                "done" => {
+                    let r = st.result.ok_or("done without result")?;
+                    emit_status(
+                        &app_handle,
+                        MaskStatusEvent {
+                            sub_mask_id: request.sub_mask_id.clone(),
+                            stage: "done".into(),
+                            queue_position: None,
+                            progress: Some(1.0),
+                            detail: None,
+                        },
+                    );
+                    return Ok(serde_json::json!({
+                        "maskDataBase64": format!("data:image/png;base64,{}", r.mask_png_b64),
+                        "rotation": request.rotation,
+                        "flipHorizontal": request.flip_horizontal,
+                        "flipVertical": request.flip_vertical,
+                        "orientationSteps": request.orientation_steps,
+                        "mode": request.mode,
+                        "query": request.query,
+                        "preset": request.preset,
+                        "agentic": params.agentic,
+                        "backend": params.backend,
+                        "alignment": r.alignment,
+                        "labels": r.labels,
+                    }));
+                }
+                "cancelled" => {
+                    return Err("cancelled".into());
+                }
+                _ => {
+                    let detail = st
+                        .error
+                        .as_ref()
+                        .and_then(|e| e.get("kind").and_then(|k| k.as_str()))
+                        .unwrap_or("error")
+                        .to_string();
+                    emit_status(
+                        &app_handle,
+                        MaskStatusEvent {
+                            sub_mask_id: request.sub_mask_id.clone(),
+                            stage: "error".into(),
+                            queue_position: None,
+                            progress: None,
+                            detail: Some(detail.clone()),
+                        },
+                    );
+                    return Err(format!("mask job failed: {} — {:?}", detail, st.error));
+                }
             }
         }
     }
+    .await;
+
+    *state.remote_mask_current_job.lock().unwrap() = None;
+    outcome
 }
 
 #[tauri::command]
