@@ -28,6 +28,7 @@ export enum Mask {
   Luminance = 'luminance',
   QuickEraser = 'quick-eraser',
   Radial = 'radial',
+  RemoteAi = 'remote-ai',
 }
 
 export enum SubMaskMode {
@@ -76,6 +77,7 @@ export function formatMaskTypeName(type: string) {
   if (type === Mask.Linear) return i18n.t('masks.types.linear');
   if (type === Mask.Luminance) return i18n.t('masks.types.luminance');
   if (type === Mask.Radial) return i18n.t('masks.types.radial');
+  if (type === Mask.RemoteAi) return i18n.t('masks.types.remoteAi');
   return type.charAt(0).toUpperCase() + type.slice(1);
 }
 
@@ -104,6 +106,7 @@ export const MASK_ICON_MAP: Record<Mask, any> = {
   [Mask.Luminance]: Sparkles,
   [Mask.QuickEraser]: Eraser,
   [Mask.Radial]: Circle,
+  [Mask.RemoteAi]: Cloud,
 };
 
 export const MASK_PANEL_CREATION_TYPES: Array<MaskType> = [

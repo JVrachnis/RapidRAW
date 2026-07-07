@@ -1001,6 +1001,26 @@
     }
   },
   "masks": {
+    "remote": {
+      "agentic": "Agentic refine",
+      "alignmentWarning": "Mask generated from the original RAW; alignment is best-effort. Switch payload to TIFF for exact alignment.",
+      "cancel": "Cancel",
+      "found": "Found: {{labels}}",
+      "generate": "Generate",
+      "multirep": "Multi-rep (2-GPU)",
+      "paint": "Paint",
+      "points": "Points",
+      "preset": "Preset",
+      "presets": {
+        "foreground": "Foreground",
+        "sky": "Sky",
+        "subject": "Subject"
+      },
+      "prompt": "Prompt",
+      "queued": "Queued (position {{position}})",
+      "running": "Generating…",
+      "uploading": "Uploading image…"
+    },
     "types": {
       "all": "Whole Image",
       "brush": "Brush",
@@ -1014,6 +1034,7 @@
       "quickErase": "Quick Erase",
       "quickEraser": "Quick Eraser",
       "radial": "Radial",
+      "remoteAi": "AI (Remote)",
       "sky": "Sky",
       "subject": "Subject"
     }

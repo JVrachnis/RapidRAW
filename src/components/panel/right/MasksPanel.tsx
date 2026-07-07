@@ -139,6 +139,12 @@ const SUB_MASK_CONFIG: Record<Mask, any> = {
     ],
   },
   [Mask.QuickEraser]: { parameters: [] },
+  [Mask.RemoteAi]: {
+    parameters: [
+      { key: 'grow', min: -100, max: 100, step: 1, defaultValue: 0 },
+      { key: 'feather', min: 0, max: 100, step: 1, defaultValue: 0 },
+    ],
+  },
 };
 
 const BrushTools = ({
