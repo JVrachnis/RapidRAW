@@ -1009,7 +1009,9 @@
       "generate": "Generate",
       "multirep": "Multi-rep (2-GPU)",
       "paint": "Paint",
+      "paintHint": "Paint over the area on the image, then click Generate.",
       "points": "Points",
+      "pointsHint": "Click on the image to add a point. Alt/right-click adds an exclude point.",
       "preset": "Preset",
       "presets": {
         "foreground": "Foreground",

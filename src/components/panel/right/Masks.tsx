@@ -8,6 +8,7 @@ import {
   Eraser,
   MoreHorizontal,
   RectangleHorizontal,
+  Server,
   Sparkles,
   TriangleRight,
   User,
@@ -106,7 +107,18 @@ export const MASK_ICON_MAP: Record<Mask, any> = {
   [Mask.Luminance]: Sparkles,
   [Mask.QuickEraser]: Eraser,
   [Mask.Radial]: Circle,
-  [Mask.RemoteAi]: Cloud,
+  [Mask.RemoteAi]: Server,
+};
+
+// Not included in the static creation-type arrays below because it is only
+// offered once the remote-mask backend is confirmed reachable (see
+// useRemoteAiMasking's `available` flag); MasksPanel splices this in
+// conditionally at render time.
+export const REMOTE_AI_MASK_TYPE: MaskType = {
+  disabled: false,
+  icon: Server,
+  name: 'AI (Remote)',
+  type: Mask.RemoteAi,
 };
 
 export const MASK_PANEL_CREATION_TYPES: Array<MaskType> = [

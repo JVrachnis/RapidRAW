@@ -630,7 +630,11 @@ const MaskOverlay = memo(
       return null;
     }
 
-    if (subMask.type === Mask.Brush || subMask.type === Mask.Flow) {
+    if (
+      subMask.type === Mask.Brush ||
+      subMask.type === Mask.Flow ||
+      (subMask.type === Mask.RemoteAi && p.mode === 'paint')
+    ) {
       const { lines = [] } = p;
       return (
         <Group
@@ -641,6 +645,34 @@ const MaskOverlay = memo(
         >
           {lines.map((line: DrawnLine, i: number) => (
             <OptimizedBrushLine key={i} line={line} scale={scale} cropX={cropX} cropY={cropY} />
+          ))}
+        </Group>
+      );
+    }
+
+    if (subMask.type === Mask.RemoteAi && p.mode === 'points') {
+      const points: Array<[number, number, number]> = Array.isArray(p.points) ? p.points : [];
+      return (
+        <Group
+          onClick={handleSelect}
+          onTap={handleSelect}
+          onTouchEnd={handleMaskTouchEnd}
+          onTouchStart={handleMaskTouchStart}
+        >
+          {points.map(([px, py, label], i) => (
+            <Circle
+              key={i}
+              x={(px - cropX) * scale}
+              y={(py - cropY) * scale}
+              radius={5}
+              stroke={isSelected ? '#0ea5e9' : 'white'}
+              fill={label === 0 ? '#f43f5e' : '#0ea5e9'}
+              strokeWidth={2}
+              listening={!isToolActive}
+              shadowColor="black"
+              shadowBlur={2}
+              shadowOpacity={0.8}
+            />
           ))}
         </Group>
       );
@@ -1231,8 +1263,17 @@ const ImageCanvas = memo(
     const brushStageSize = (brushSettings?.size ?? 0) / effectiveZoomScale;
     const brushImageSpaceSize = brushStageSize / (imageRenderSize.scale || 1);
 
+    const isRemoteAiPaintActive =
+      (isMasking || isAiEditing) &&
+      activeSubMask?.type === Mask.RemoteAi &&
+      (activeSubMask?.parameters?.mode ?? 'prompt') === 'paint';
+    const isRemoteAiPointsActive =
+      (isMasking || isAiEditing) &&
+      activeSubMask?.type === Mask.RemoteAi &&
+      (activeSubMask?.parameters?.mode ?? 'prompt') === 'points';
     const isBrushActive =
-      (isMasking || isAiEditing) && (activeSubMask?.type === Mask.Brush || activeSubMask?.type === Mask.Flow);
+      (isMasking || isAiEditing) &&
+      (activeSubMask?.type === Mask.Brush || activeSubMask?.type === Mask.Flow || isRemoteAiPaintActive);
     const activeLineFlow = activeSubMask?.type === Mask.Flow ? (activeSubMask?.parameters?.flow ?? 10) : undefined;
     const brushCursorPreview = useMemo(() => {
       const radius = Math.max(0.1, brushStageSize / 2);
@@ -1293,7 +1334,8 @@ const ImageCanvas = memo(
       (isMasking || isAiEditing) && (activeSubMask?.type === Mask.Color || activeSubMask?.type === Mask.Luminance);
     const isInitialDrawing = (isMasking || isAiEditing) && activeSubMask?.parameters?.isInitialDraw === true;
 
-    const isToolActive = isBrushActive || isAiSubjectActive || isInitialDrawing || isParametricActive;
+    const isToolActive =
+      isBrushActive || isAiSubjectActive || isInitialDrawing || isParametricActive || isRemoteAiPointsActive;
 
     useEffect(() => {
       if (maskOverlayUrl && (isMasking || isAiEditing)) {
@@ -1448,7 +1490,8 @@ const ImageCanvas = memo(
 
     const handleStart = useCallback(
       (e: any) => {
-        if (e.evt && typeof e.evt.button === 'number' && e.evt.button !== 0) {
+        const isRightClickForRemoteAiPoints = isRemoteAiPointsActive && e.evt && e.evt.button === 2;
+        if (e.evt && typeof e.evt.button === 'number' && e.evt.button !== 0 && !isRightClickForRemoteAiPoints) {
           return;
         }
 
@@ -1549,6 +1592,30 @@ const ImageCanvas = memo(
             return;
           }
 
+          if (isRemoteAiPointsActive && activeSubMask) {
+            const { scale } = imageRenderSize;
+            const crop = adjustments.crop;
+            const isPercent = crop?.unit === '%';
+            const cropX = crop ? (isPercent ? (crop.x / 100) * effectiveImageDimensions.width : crop.x) : 0;
+            const cropY = crop ? (isPercent ? (crop.y / 100) * effectiveImageDimensions.height : crop.y) : 0;
+
+            const x = pos.x / scale + cropX;
+            const y = pos.y / scale + cropY;
+            // Right-click or Alt+click marks an exclude ("background") point.
+            const isExclude = e.evt.button === 2 || e.evt.altKey;
+            const label = isExclude ? 0 : 1;
+
+            const activeId = isMasking ? activeMaskId : activeAiSubMaskId;
+            const existingPoints = activeSubMask.parameters?.points || [];
+            updateSubMask(activeId, {
+              parameters: {
+                ...activeSubMask.parameters,
+                points: [...existingPoints, [x, y, label]],
+              },
+            });
+            return;
+          }
+
           const isAltPressed = e.evt.altKey;
           let effectiveTool;
 
@@ -1638,6 +1705,7 @@ const ImageCanvas = memo(
         isBrushActive,
         activeLineFlow,
         isAiSubjectActive,
+        isRemoteAiPointsActive,
         isParametricActive,
         brushSettings,
         onSelectMask,
@@ -2229,8 +2297,17 @@ const ImageCanvas = memo(
       if (isInitialDrawing) return 'crosshair';
       if (isBrushActive) return 'none';
       if (isAiSubjectActive) return 'crosshair';
+      if (isRemoteAiPointsActive) return 'crosshair';
       return cursorStyle;
-    }, [isWbPickerActive, isInitialDrawing, isBrushActive, isAiSubjectActive, isParametricActive, cursorStyle]);
+    }, [
+      isWbPickerActive,
+      isInitialDrawing,
+      isBrushActive,
+      isAiSubjectActive,
+      isRemoteAiPointsActive,
+      isParametricActive,
+      cursorStyle,
+    ]);
 
     const handlePreviewUpdate = useCallback(
       (id: string, subMaskPreview: Partial<SubMask>) => {
@@ -2420,6 +2497,9 @@ const ImageCanvas = memo(
                 onTouchMove={handleMove}
                 onMouseUp={handleUp}
                 onTouchEnd={handleUp}
+                onContextMenu={(e: any) => {
+                  if (isRemoteAiPointsActive && e.evt) e.evt.preventDefault();
+                }}
               >
                 <Layer listening={!showOriginal}>
                   <Group scaleX={maxSafeScale} scaleY={maxSafeScale}>

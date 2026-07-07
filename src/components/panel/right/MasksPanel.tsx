@@ -61,12 +61,15 @@ import {
   MASK_PANEL_CREATION_TYPES,
   OTHERS_MASK_TYPES,
   MASK_ICON_MAP,
+  REMOTE_AI_MASK_TYPE,
   SubMaskMode,
   ToolType,
   formatMaskTypeName,
   getSubMaskName,
   getMaskTypeName,
 } from './Masks';
+import RemoteMaskControls from './RemoteMaskControls';
+import { useRemoteAiMasking } from '../../../hooks/useRemoteAiMasking';
 import {
   Adjustments,
   INITIAL_MASK_ADJUSTMENTS,
@@ -566,6 +569,7 @@ export default function MasksPanel() {
   const { t } = useTranslation();
   const { setAdjustments } = useEditorActions();
   const { handleGenerateAiDepthMask, handleGenerateAiForegroundMask, handleGenerateAiSkyMask } = useAiMasking();
+  const remoteAiMasking = useRemoteAiMasking();
   const setCustomEscapeHandler = useUIStore((s) => s.setCustomEscapeHandler);
   const { appSettings } = useSettingsStore(
     useShallow((state) => ({
@@ -669,6 +673,17 @@ export default function MasksPanel() {
   const activeSubMaskData = activeContainer?.subMasks?.find((sm) => sm.id === activeMaskId);
   const isAiMask =
     activeSubMaskData && [Mask.AiSubject, Mask.AiForeground, Mask.AiSky, Mask.AiDepth].includes(activeSubMaskData.type);
+
+  // RemoteAi is only offered as a creation option once the remote-mask
+  // backend is confirmed reachable; spliced in before the "others" entry so
+  // it keeps parity with the rest of the top-level AI mask types.
+  const creationTypes: MaskType[] = remoteAiMasking.available
+    ? (() => {
+        const withoutOthers = MASK_PANEL_CREATION_TYPES.filter((m) => m.id !== 'others');
+        const others = MASK_PANEL_CREATION_TYPES.find((m) => m.id === 'others');
+        return others ? [...withoutOthers, REMOTE_AI_MASK_TYPE, others] : [...withoutOthers, REMOTE_AI_MASK_TYPE];
+      })()
+    : MASK_PANEL_CREATION_TYPES;
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -899,7 +914,7 @@ export default function MasksPanel() {
     const buildModeSubmenu = (label: string, icon: any, mode: SubMaskMode) => ({
       label,
       icon,
-      submenu: MASK_PANEL_CREATION_TYPES.map((maskType) => {
+      submenu: creationTypes.map((maskType) => {
         if (maskType.id === 'others') {
           return {
             label: getMaskTypeName(maskType),
@@ -917,10 +932,10 @@ export default function MasksPanel() {
     });
 
     const options: any[] = buildMenu(
-      MASK_PANEL_CREATION_TYPES.filter((m) => m.id !== 'others'),
+      creationTypes.filter((m) => m.id !== 'others'),
       SubMaskMode.Additive,
     );
-    const others = MASK_PANEL_CREATION_TYPES.find((m) => m.id === 'others');
+    const others = creationTypes.find((m) => m.id === 'others');
     if (others) {
       options.push({
         label: getMaskTypeName(others),
@@ -1254,7 +1269,7 @@ export default function MasksPanel() {
 
   const handlePanelContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
-    const allTypes = [...MASK_PANEL_CREATION_TYPES.filter((m) => m.id !== 'others'), ...OTHERS_MASK_TYPES];
+    const allTypes = [...creationTypes.filter((m) => m.id !== 'others'), ...OTHERS_MASK_TYPES];
     const newMaskSubMenu = allTypes.map((m) => ({
       label: getMaskTypeName(m),
       icon: m.icon,
@@ -1347,7 +1362,7 @@ export default function MasksPanel() {
                   {t('editor.masks.createNewTitle')}
                 </Text>
                 <div className="grid grid-cols-3 gap-2" onClick={(e) => e.stopPropagation()}>
-                  {MASK_PANEL_CREATION_TYPES.map((maskType: MaskType) => (
+                  {creationTypes.map((maskType: MaskType) => (
                     <DraggableGridItem
                       key={maskType.type || maskType.id}
                       maskType={maskType}
@@ -1486,6 +1501,7 @@ export default function MasksPanel() {
                   setSettingsSectionOpen={setSettingsSectionOpen}
                   presets={presets}
                   handleGenerateAiDepthMask={handleGenerateAiDepthMask}
+                  remoteAiMasking={remoteAiMasking}
                 />
               </motion.div>
             )}
@@ -1533,7 +1549,7 @@ export default function MasksPanel() {
               >
                 {(() => {
                   const maskType =
-                    MASK_PANEL_CREATION_TYPES.find((m) => m.type === activeDragItem.maskType) ||
+                    creationTypes.find((m) => m.type === activeDragItem.maskType) ||
                     OTHERS_MASK_TYPES.find((m) => m.type === activeDragItem.maskType);
                   const Icon = maskType?.icon || Circle;
                   return (
@@ -2170,6 +2186,56 @@ function SubMaskRow({
   );
 }
 
+/**
+ * Rasterizes brush strokes (captured in full-image coordinates, same shape
+ * ImageCanvas.tsx uses for `parameters.lines`) into a full-resolution
+ * grayscale mask: white where painted, black elsewhere. Returns a PNG data
+ * URL suitable for stripping down to a base64 ROI mask for the remote-mask
+ * "paint" mode. There is no existing rasterizer for brush lines to reuse
+ * (the app's only mask rasterization happens on the Rust side against the
+ * full render pipeline), so this is a minimal, purpose-built 2D canvas pass.
+ */
+function rasterizeLinesToMaskDataUrl(lines: any[], width: number, height: number): string | null {
+  if (!width || !height || !lines || lines.length === 0) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  ctx.fillStyle = 'black';
+  ctx.fillRect(0, 0, width, height);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  for (const line of lines) {
+    const points: Array<{ x: number; y: number }> = line.points || [];
+    if (points.length === 0) continue;
+
+    const isEraser = line.tool === ToolType.Eraser;
+    ctx.globalCompositeOperation = isEraser ? 'destination-out' : 'source-over';
+    ctx.strokeStyle = 'white';
+    ctx.fillStyle = 'white';
+    ctx.lineWidth = Math.max(1, line.brushSize || 1);
+
+    if (points.length === 1) {
+      ctx.beginPath();
+      ctx.arc(points[0].x, points[0].y, ctx.lineWidth / 2, 0, Math.PI * 2);
+      ctx.fill();
+      continue;
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x, points[i].y);
+    }
+    ctx.stroke();
+  }
+
+  return canvas.toDataURL('image/png');
+}
+
 function SettingsPanel({
   container,
   activeSubMask,
@@ -2191,6 +2257,7 @@ function SettingsPanel({
   setSettingsSectionOpen,
   presets,
   handleGenerateAiDepthMask,
+  remoteAiMasking,
 }: any) {
   const { t } = useTranslation();
   const { showContextMenu } = useContextMenu();
@@ -2259,6 +2326,37 @@ function SettingsPanel({
     if (!isActive || !activeSubMask) return;
     const newParams = { ...activeSubMask.parameters, ...changes };
     updateSubMask(activeSubMask.id, { parameters: newParams });
+  };
+
+  // Builds the remote-mask generate() options from a remote-ai sub-mask's
+  // current `parameters`. For "paint" mode, the brush strokes captured in
+  // parameters.lines (same full-image-coordinate shape ImageCanvas uses for
+  // Mask.Brush) are rasterized here into a full-res grayscale PNG and passed
+  // as `roiMaskB64` (prefix stripped, per the Rust request contract).
+  const buildRemoteMaskRequest = (subMask: SubMask) => {
+    const params = subMask.parameters || {};
+    const mode = params.mode || 'prompt';
+
+    if (mode === 'paint') {
+      const { selectedImage, adjustments: currentAdjustments } = useEditorStore.getState();
+      const steps = currentAdjustments?.orientationSteps || 0;
+      const isRotated = steps === 1 || steps === 3;
+      const width = isRotated ? selectedImage?.height || 0 : selectedImage?.width || 0;
+      const height = isRotated ? selectedImage?.width || 0 : selectedImage?.height || 0;
+      const dataUrl = rasterizeLinesToMaskDataUrl(params.lines || [], width, height);
+      const roiMaskB64 = dataUrl ? dataUrl.replace(/^data:image\/png;base64,/, '') : undefined;
+      return { mode, roiMaskB64 };
+    }
+
+    if (mode === 'points') {
+      return { mode, points: params.points || [] };
+    }
+
+    if (mode === 'preset') {
+      return { mode, preset: params.preset || 'subject' };
+    }
+
+    return { mode, query: params.query || '', agentic: params.agentic, sam3Multirep: params.sam3Multirep };
   };
 
   const handleDepthRangeChange = (values: { minDepth: number; maxDepth: number; minFade: number; maxFade: number }) => {
@@ -2520,6 +2618,17 @@ function SettingsPanel({
                     onDragStateChange={onDragStateChange}
                   />
                 ))}
+
+              {activeSubMask.type === Mask.RemoteAi && (
+                <RemoteMaskControls
+                  subMask={activeSubMask}
+                  onParametersChange={handleSubMaskParametersChange}
+                  onGenerate={() => remoteAiMasking?.generate(activeSubMask, buildRemoteMaskRequest(activeSubMask))}
+                  onCancel={() => remoteAiMasking?.cancel(activeSubMask.id)}
+                  status={remoteAiMasking?.status?.[activeSubMask.id]}
+                  onDragStateChange={onDragStateChange}
+                />
+              )}
             </>
           )}
         </div>
