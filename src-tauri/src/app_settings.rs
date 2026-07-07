@@ -353,6 +353,16 @@ pub struct AppSettings {
     pub decorations: Option<bool>,
     #[serde(alias = "comfyuiAddress")]
     pub ai_connector_address: Option<String>,
+    #[serde(default)]
+    pub remote_mask_address: Option<String>,
+    #[serde(default)]
+    pub remote_mask_payload: Option<String>, // "tiff" (default) | "raw"
+    #[serde(default)]
+    pub remote_mask_include_rrdata: Option<bool>,
+    #[serde(default)]
+    pub remote_mask_backend: Option<String>, // "sam2" (default) | "sam3"
+    #[serde(default)]
+    pub remote_mask_agentic_default: Option<bool>,
     pub last_folder_state: Option<LastFolderState>,
     pub ui_visibility: Option<Value>,
     pub enable_ai_tagging: Option<bool>,
@@ -457,6 +467,11 @@ impl Default for AppSettings {
             font_family: None,
             decorations: Some(false),
             ai_connector_address: None,
+            remote_mask_address: None,
+            remote_mask_payload: Some("tiff".to_string()),
+            remote_mask_include_rrdata: Some(true),
+            remote_mask_backend: Some("sam2".to_string()),
+            remote_mask_agentic_default: Some(false),
             last_folder_state: None,
             ui_visibility: None,
             enable_ai_tagging: Some(false),
