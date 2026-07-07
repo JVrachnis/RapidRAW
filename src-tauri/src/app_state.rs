@@ -147,6 +147,9 @@ pub struct AppState {
     pub full_transformed_cache: Mutex<Option<TransformedImageCache>>,
     pub decoded_image_cache: Mutex<DecodedImageCache>,
     pub thumbnail_manager: Arc<ThumbnailManager>,
-    pub remote_mask_source_memo: Mutex<Option<(String, String)>>, // (blake3 hex, gateway source_id)
-    pub remote_mask_current_job: Mutex<Option<String>>,
+    // (blake3 hex -> gateway source_id), capped at REMOTE_MASK_MEMO_CAP entries.
+    pub remote_mask_source_memo: Mutex<HashMap<String, String>>,
+    // sub_mask_id -> job_id, so concurrent remote-AI masks on different
+    // sub-masks each track (and can cancel) only their own job.
+    pub remote_mask_jobs: Mutex<HashMap<String, String>>,
 }

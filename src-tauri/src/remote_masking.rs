@@ -2,8 +2,10 @@
 //! 2026-07-07-remote-ai-masking-design.md). Upload once (content-addressed),
 //! enqueue a mask job, poll, return parameters for a `remote-ai` sub-mask.
 
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::Path;
+use std::time::Duration;
 
 use image::codecs::tiff::TiffEncoder;
 use image::{DynamicImage, ExtendedColorType, ImageEncoder};
@@ -15,6 +17,28 @@ use tauri::Emitter;
 use crate::app_settings::load_settings;
 use crate::app_state::AppState;
 use crate::get_cached_full_warped_image;
+
+/// Max entries kept in the source memo (blake3 hex -> gateway source_id).
+/// A real LRU is overkill here: eviction just means the next upload for that
+/// content hash pays for a redundant re-upload (or a 410-retry), never a
+/// correctness problem.
+const REMOTE_MASK_MEMO_CAP: usize = 8;
+
+/// Insert `(hash, source_id)` into the memo map, evicting an arbitrary entry
+/// first if the map is already at capacity. Factored out as a pure function
+/// so the capping behavior is unit-testable without touching AppState/mutexes.
+fn memo_insert_capped(map: &mut HashMap<String, String>, hash: String, source_id: String) {
+    if map.len() >= REMOTE_MASK_MEMO_CAP && !map.contains_key(&hash) {
+        if let Some(evict_key) = map.keys().next().cloned() {
+            map.remove(&evict_key);
+        }
+    }
+    map.insert(hash, source_id);
+}
+
+/// Wall-clock ceiling for the poll loop. The gateway's own job timeout is
+/// 600s; this is generous enough to also cover queue wait ahead of that.
+const POLL_DEADLINE: Duration = Duration::from_secs(900);
 
 #[derive(Serialize, Clone, Debug)]
 pub struct MaskJobParams {
@@ -182,6 +206,17 @@ fn gather_rrdata(path: &str) -> Option<String> {
     std::fs::read_to_string(sidecar).ok()
 }
 
+/// Everything gathered by `encode_payload_blocking`: the upload bytes/filename,
+/// the content hash used for the source memo, and the sidecar EXIF/rrdata JSON
+/// (also read from disk, so they ride along in the same blocking closure).
+struct EncodedPayload {
+    bytes: Vec<u8>,
+    filename: String,
+    hash: String,
+    exif_json: Option<String>,
+    rrdata_json: Option<String>,
+}
+
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteMaskRequest {
@@ -201,14 +236,17 @@ pub struct RemoteMaskRequest {
     pub js_adjustments: Value,
 }
 
-/// Encode the upload payload (TIFF-encode + hash) off the async executor:
-/// with a 150-300MB warped-image buffer, doing this inline would stall every
-/// other task on the Tokio runtime.
+/// Encode the upload payload (TIFF-encode + hash) and gather sidecar
+/// EXIF/rrdata off the async executor: with a 150-300MB warped-image buffer
+/// plus potentially tens-of-MB `std::fs::read`s for EXIF/rrdata sidecars,
+/// doing any of this inline would stall every other task on the Tokio
+/// runtime.
 async fn encode_payload_blocking(
     payload_mode: &str,
     path: String,
     warped_image: Option<std::sync::Arc<DynamicImage>>,
-) -> Result<(Vec<u8>, String, String), String> {
+    include_rrdata: bool,
+) -> Result<EncodedPayload, String> {
     let payload_mode = payload_mode.to_string();
     tauri::async_runtime::spawn_blocking(move || {
         let (bytes, filename) = if payload_mode == "raw" {
@@ -224,14 +262,23 @@ async fn encode_payload_blocking(
             (tiff, "source.tiff".to_string())
         };
         let hash = blake3::hash(&bytes).to_hex().to_string();
-        Ok::<_, String>((bytes, filename, hash))
+        let exif_json = gather_exif(&path);
+        let rrdata_json = if include_rrdata { gather_rrdata(&path) } else { None };
+        Ok::<_, String>(EncodedPayload {
+            bytes,
+            filename,
+            hash,
+            exif_json,
+            rrdata_json,
+        })
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
 /// Upload the current payload (or reuse a cached source via the blake3 memo)
-/// and return the gateway `source_id`.
+/// and return the gateway `source_id` along with the content hash used to
+/// look it up, so callers can evict precisely on a stale-source 410.
 #[allow(clippy::too_many_arguments)]
 async fn resolve_source_id(
     state: &tauri::State<'_, AppState>,
@@ -242,35 +289,40 @@ async fn resolve_source_id(
     path: &str,
     warped_image: Option<std::sync::Arc<DynamicImage>>,
     client_dims: Option<(u32, u32)>,
-    exif_json: Option<String>,
-    rrdata_json: Option<String>,
-) -> Result<String, String> {
-    let (bytes, filename, hash) =
-        encode_payload_blocking(payload_mode, path.to_string(), warped_image).await?;
+    include_rrdata: bool,
+) -> Result<(String, String), String> {
+    let encoded = encode_payload_blocking(
+        payload_mode,
+        path.to_string(),
+        warped_image,
+        include_rrdata,
+    )
+    .await?;
 
     let memo_hit = {
         let memo = state.remote_mask_source_memo.lock().unwrap();
-        memo.as_ref()
-            .filter(|(h, _)| *h == hash)
-            .map(|(_, sid)| sid.clone())
+        memo.get(&encoded.hash).cloned()
     };
     if let Some(sid) = memo_hit {
-        return Ok(sid);
+        return Ok((encoded.hash, sid));
     }
 
     let sid = upload_source(
         client,
         base,
         token,
-        bytes,
-        &filename,
-        exif_json,
-        rrdata_json,
+        encoded.bytes,
+        &encoded.filename,
+        encoded.exif_json,
+        encoded.rrdata_json,
         client_dims,
     )
     .await?;
-    *state.remote_mask_source_memo.lock().unwrap() = Some((hash, sid.clone()));
-    Ok(sid)
+    {
+        let mut memo = state.remote_mask_source_memo.lock().unwrap();
+        memo_insert_capped(&mut memo, encoded.hash.clone(), sid.clone());
+    }
+    Ok((encoded.hash, sid))
 }
 
 #[tauri::command]
@@ -296,12 +348,7 @@ pub async fn generate_remote_ai_mask(
 
     // ---- payload ----
     let payload_mode = settings.remote_mask_payload.as_deref().unwrap_or("tiff");
-    let exif_json = gather_exif(&request.path);
-    let rrdata_json = if settings.remote_mask_include_rrdata.unwrap_or(true) {
-        gather_rrdata(&request.path)
-    } else {
-        None
-    };
+    let include_rrdata = settings.remote_mask_include_rrdata.unwrap_or(true);
 
     // The warped image comes from AppState's cache (same image local AI
     // masks use). For "raw" payloads we still fetch it, purely to report
@@ -318,7 +365,7 @@ pub async fn generate_remote_ai_mask(
         Some(warped_image)
     };
 
-    let source_id = resolve_source_id(
+    let (source_hash, source_id) = resolve_source_id(
         &state,
         &client,
         &base,
@@ -327,8 +374,7 @@ pub async fn generate_remote_ai_mask(
         &request.path,
         warped_for_encode.clone(),
         client_dims,
-        exif_json.clone(),
-        rrdata_json.clone(),
+        include_rrdata,
     )
     .await?;
 
@@ -368,10 +414,15 @@ pub async fn generate_remote_ai_mask(
 
     if resp.status().as_u16() == 410 {
         // Evicted server-side: the source cache makes a re-upload cheap, so
-        // clear the memo and retry ONCE transparently rather than surfacing
-        // an error to the user.
-        *state.remote_mask_source_memo.lock().unwrap() = None;
-        let new_source_id = resolve_source_id(
+        // drop only the offending hash's memo entry and retry ONCE
+        // transparently rather than surfacing an error to the user (other
+        // memoized sources are still valid, no need to clear the whole map).
+        state
+            .remote_mask_source_memo
+            .lock()
+            .unwrap()
+            .remove(&source_hash);
+        let (_, new_source_id) = resolve_source_id(
             &state,
             &client,
             &base,
@@ -380,8 +431,7 @@ pub async fn generate_remote_ai_mask(
             &request.path,
             warped_for_encode,
             client_dims,
-            exif_json,
-            rrdata_json,
+            include_rrdata,
         )
         .await?;
         resp = submit_job(&client, &base, token.as_deref(), &new_source_id, &params).await?;
@@ -392,20 +442,25 @@ pub async fn generate_remote_ai_mask(
     }
     let job: JobSubmitted = resp.json().await.map_err(|e| e.to_string())?;
     {
-        let mut cur = state.remote_mask_current_job.lock().unwrap();
-        *cur = Some(job.job_id.clone());
+        let mut jobs = state.remote_mask_jobs.lock().unwrap();
+        jobs.insert(request.sub_mask_id.clone(), job.job_id.clone());
     }
 
     // ---- poll ----
     // The whole polling section is wrapped in an inner async block so that,
     // regardless of which path it exits through (success, cancellation,
     // terminal error, or a transient network/deserialize error via `?`),
-    // `remote_mask_current_job` is cleared exactly once, unconditionally,
-    // right after the block finishes. This avoids leaving a stale job id in
-    // AppState if a poll request itself fails.
+    // this sub-mask's entry in `remote_mask_jobs` is removed exactly once,
+    // unconditionally, right after the block finishes. This avoids leaving a
+    // stale job id in AppState if a poll request itself fails, while leaving
+    // other sub-masks' concurrent jobs untouched.
+    let poll_start = std::time::Instant::now();
     let outcome: Result<Value, String> = async {
         let mut delay = std::time::Duration::from_millis(500);
         loop {
+            if poll_start.elapsed() >= POLL_DEADLINE {
+                return Err("mask job timed out waiting for the gateway".into());
+            }
             tokio::time::sleep(delay).await;
             delay = std::cmp::min(delay * 2, std::time::Duration::from_secs(2));
             let mut req = client.get(format!("{}/jobs/{}", base, job.job_id));
@@ -457,6 +512,9 @@ pub async fn generate_remote_ai_mask(
                         "backend": params.backend,
                         "alignment": r.alignment,
                         "labels": r.labels,
+                        "width": r.width,
+                        "height": r.height,
+                        "timings": r.timings,
                     }));
                 }
                 "cancelled" => {
@@ -486,16 +544,27 @@ pub async fn generate_remote_ai_mask(
     }
     .await;
 
-    *state.remote_mask_current_job.lock().unwrap() = None;
+    state
+        .remote_mask_jobs
+        .lock()
+        .unwrap()
+        .remove(&request.sub_mask_id);
     outcome
 }
 
 #[tauri::command]
 pub async fn cancel_remote_ai_mask(
+    sub_mask_id: String,
     state: tauri::State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let job_id = { state.remote_mask_current_job.lock().unwrap().clone() };
+    let job_id = {
+        state
+            .remote_mask_jobs
+            .lock()
+            .unwrap()
+            .remove(&sub_mask_id)
+    };
     let Some(job_id) = job_id else {
         return Ok(());
     };
@@ -506,7 +575,6 @@ pub async fn cancel_remote_ai_mask(
         req = req.bearer_auth(t);
     }
     req.send().await.map_err(|e| e.to_string())?;
-    *state.remote_mask_current_job.lock().unwrap() = None;
     Ok(())
 }
 
@@ -661,5 +729,36 @@ mod tests {
         assert!(req.points.is_none());
         assert!(req.roi_mask_b64.is_none());
         assert!(req.sam3_multirep.is_none());
+    }
+
+    #[test]
+    fn memo_insert_capped_stays_at_cap_and_evicts_something() {
+        let mut map: HashMap<String, String> = HashMap::new();
+        for i in 0..REMOTE_MASK_MEMO_CAP {
+            memo_insert_capped(&mut map, format!("hash{i}"), format!("sid{i}"));
+        }
+        assert_eq!(map.len(), REMOTE_MASK_MEMO_CAP);
+
+        // One more insert beyond the cap must evict something rather than
+        // growing the map unbounded.
+        memo_insert_capped(&mut map, "hash-new".into(), "sid-new".into());
+        assert_eq!(map.len(), REMOTE_MASK_MEMO_CAP);
+        assert_eq!(map.get("hash-new").map(String::as_str), Some("sid-new"));
+    }
+
+    #[test]
+    fn memo_insert_capped_updates_existing_key_without_evicting() {
+        let mut map: HashMap<String, String> = HashMap::new();
+        for i in 0..REMOTE_MASK_MEMO_CAP {
+            memo_insert_capped(&mut map, format!("hash{i}"), format!("sid{i}"));
+        }
+        // Re-inserting an existing hash with a new source_id must not evict
+        // any other entry, since the map isn't actually growing.
+        memo_insert_capped(&mut map, "hash0".into(), "sid0-updated".into());
+        assert_eq!(map.len(), REMOTE_MASK_MEMO_CAP);
+        assert_eq!(
+            map.get("hash0").map(String::as_str),
+            Some("sid0-updated")
+        );
     }
 }

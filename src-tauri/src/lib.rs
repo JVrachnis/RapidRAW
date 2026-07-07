@@ -2216,8 +2216,8 @@ pub fn run() {
             full_transformed_cache: Mutex::new(None),
             decoded_image_cache: Mutex::new(DecodedImageCache::new(5)),
             thumbnail_manager: ThumbnailManager::new(),
-            remote_mask_source_memo: Mutex::new(None),
-            remote_mask_current_job: Mutex::new(None),
+            remote_mask_source_memo: Mutex::new(HashMap::new()),
+            remote_mask_jobs: Mutex::new(HashMap::new()),
         })
         .invoke_handler(tauri::generate_handler![
             apply_adjustments,
