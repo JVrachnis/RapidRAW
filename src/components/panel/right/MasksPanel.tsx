@@ -2187,6 +2187,28 @@ function SubMaskRow({
 }
 
 /**
+ * Creates a full-resolution black-filled canvas + 2D context, the common
+ * starting point for both `rasterizeLinesToMaskDataUrl` and
+ * `rasterizeEllipseToMaskDataUrl`: a white-on-black ROI mask always begins
+ * with the same black backdrop at the image's full-res dimensions. Returns
+ * null (rather than throwing) when dimensions are missing/zero or a 2D
+ * context can't be obtained, matching the two callers' existing null-return
+ * contract for "nothing to rasterize."
+ */
+function createBlackMaskCanvas(width: number, height: number): CanvasRenderingContext2D | null {
+  if (!width || !height) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  ctx.fillStyle = 'black';
+  ctx.fillRect(0, 0, width, height);
+  return ctx;
+}
+
+/**
  * Rasterizes brush strokes (captured in full-image coordinates, same shape
  * ImageCanvas.tsx uses for `parameters.lines`) into a full-resolution
  * grayscale mask: white where painted, black elsewhere. Returns a PNG data
@@ -2196,15 +2218,10 @@ function SubMaskRow({
  * full render pipeline), so this is a minimal, purpose-built 2D canvas pass.
  */
 function rasterizeLinesToMaskDataUrl(lines: any[], width: number, height: number): string | null {
-  if (!width || !height || !lines || lines.length === 0) return null;
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
+  if (!lines || lines.length === 0) return null;
+  const ctx = createBlackMaskCanvas(width, height);
   if (!ctx) return null;
 
-  ctx.fillStyle = 'black';
-  ctx.fillRect(0, 0, width, height);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
@@ -2233,7 +2250,39 @@ function rasterizeLinesToMaskDataUrl(lines: any[], width: number, height: number
     ctx.stroke();
   }
 
-  return canvas.toDataURL('image/png');
+  return ctx.canvas.toDataURL('image/png');
+}
+
+/**
+ * Rasterizes an ellipse (in the same {centerX, centerY, radiusX, radiusY,
+ * rotation} full-image-coordinate shape the native Radial mask uses) into a
+ * full-resolution white-on-black PNG data URL, for client-side-only "ellipse"
+ * remote-mask selection: sent to the gateway as a "paint"-mode roiMaskB64
+ * rather than requiring any backend awareness of an ellipse primitive.
+ */
+function rasterizeEllipseToMaskDataUrl(
+  ellipse: { centerX: number; centerY: number; radiusX: number; radiusY: number; rotation?: number } | null,
+  width: number,
+  height: number,
+): string | null {
+  if (!ellipse || ellipse.radiusX <= 0 || ellipse.radiusY <= 0) return null;
+  const ctx = createBlackMaskCanvas(width, height);
+  if (!ctx) return null;
+
+  ctx.fillStyle = 'white';
+  ctx.beginPath();
+  ctx.ellipse(
+    ellipse.centerX,
+    ellipse.centerY,
+    ellipse.radiusX,
+    ellipse.radiusY,
+    ((ellipse.rotation || 0) * Math.PI) / 180,
+    0,
+    Math.PI * 2,
+  );
+  ctx.fill();
+
+  return ctx.canvas.toDataURL('image/png');
 }
 
 function SettingsPanel({
@@ -2346,6 +2395,24 @@ function SettingsPanel({
       const dataUrl = rasterizeLinesToMaskDataUrl(params.lines || [], width, height);
       const roiMaskB64 = dataUrl ? dataUrl.replace(/^data:image\/png;base64,/, '') : undefined;
       return { mode, roiMaskB64 };
+    }
+
+    if (mode === 'box') {
+      return { mode, box: params.box || null };
+    }
+
+    // Ellipse is client-side only: the gateway has no ellipse primitive, so
+    // it's rasterized here (same helper/canvas approach as "paint") and sent
+    // as a "paint"-mode roiMaskB64 request — no backend awareness needed.
+    if (mode === 'ellipse') {
+      const { selectedImage, adjustments: currentAdjustments } = useEditorStore.getState();
+      const steps = currentAdjustments?.orientationSteps || 0;
+      const isRotated = steps === 1 || steps === 3;
+      const width = isRotated ? selectedImage?.height || 0 : selectedImage?.width || 0;
+      const height = isRotated ? selectedImage?.width || 0 : selectedImage?.height || 0;
+      const dataUrl = rasterizeEllipseToMaskDataUrl(params.ellipse || null, width, height);
+      const roiMaskB64 = dataUrl ? dataUrl.replace(/^data:image\/png;base64,/, '') : undefined;
+      return { mode: 'paint' as const, roiMaskB64 };
     }
 
     if (mode === 'points') {

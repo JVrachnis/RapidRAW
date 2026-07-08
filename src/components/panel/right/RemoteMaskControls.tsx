@@ -8,7 +8,14 @@ import { TextColors, TextVariants, TextWeights } from '../../../types/typography
 import { RemoteMaskStatus } from '../../../hooks/useRemoteAiMasking';
 import { SubMask } from './Masks';
 
-const MODES: Array<'prompt' | 'points' | 'paint' | 'preset'> = ['prompt', 'points', 'paint', 'preset'];
+const MODES: Array<'prompt' | 'points' | 'paint' | 'preset' | 'box' | 'ellipse'> = [
+  'prompt',
+  'points',
+  'paint',
+  'preset',
+  'box',
+  'ellipse',
+];
 const PRESETS = ['subject', 'sky', 'foreground'];
 
 interface RemoteMaskControlsProps {
@@ -49,7 +56,7 @@ export default function RemoteMaskControls({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-3 gap-2">
         {MODES.map((m) => (
           <button
             key={m}
@@ -126,6 +133,18 @@ export default function RemoteMaskControls({
       {mode === 'paint' && (
         <Text variant={TextVariants.small} color={TextColors.secondary}>
           {t('masks.remote.paintHint')}
+        </Text>
+      )}
+
+      {mode === 'box' && (
+        <Text variant={TextVariants.small} color={TextColors.secondary}>
+          {t('masks.remote.boxHint')}
+        </Text>
+      )}
+
+      {mode === 'ellipse' && (
+        <Text variant={TextVariants.small} color={TextColors.secondary}>
+          {t('masks.remote.ellipseHint')}
         </Text>
       )}
 

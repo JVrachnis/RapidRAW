@@ -593,6 +593,14 @@ export default function Editor({ onBackToLibrary, onContextMenu, transformWrappe
     return null;
   }, [adjustments.masks, adjustments.aiPatches, activeMaskId, activeAiSubMaskId, isMasking, isAiEditing]);
 
+  // RemoteAi sub-masks only need panning suppressed while their active mode
+  // captures clicks/strokes directly on the canvas (points/paint/box/ellipse);
+  // prompt/preset modes don't touch the canvas, so panning must stay enabled
+  // for them (and while a different sub-mask type/no sub-mask is selected).
+  const isRemoteAiCanvasModeActive =
+    activeSubMask?.type === Mask.RemoteAi &&
+    ['points', 'paint', 'box', 'ellipse'].includes(activeSubMask?.parameters?.mode ?? 'prompt');
+
   const isPanningDisabled =
     isMaskHovered ||
     isMaskTouchInteracting ||
@@ -603,7 +611,8 @@ export default function Editor({ onBackToLibrary, onContextMenu, transformWrappe
         activeSubMask?.type === Mask.AiSubject ||
         activeSubMask?.type === Mask.Color ||
         activeSubMask?.type === Mask.Luminance ||
-        activeSubMask?.parameters?.isInitialDraw)) ||
+        activeSubMask?.parameters?.isInitialDraw ||
+        isRemoteAiCanvasModeActive)) ||
     (isAiEditing &&
       (activeSubMask?.type === Mask.Brush ||
         activeSubMask?.type === Mask.Flow ||
@@ -611,7 +620,8 @@ export default function Editor({ onBackToLibrary, onContextMenu, transformWrappe
         activeSubMask?.type === Mask.QuickEraser ||
         activeSubMask?.type === Mask.Color ||
         activeSubMask?.type === Mask.Luminance ||
-        activeSubMask?.parameters?.isInitialDraw)) ||
+        activeSubMask?.parameters?.isInitialDraw ||
+        isRemoteAiCanvasModeActive)) ||
     isWbPickerActive;
 
   useEffect(() => {

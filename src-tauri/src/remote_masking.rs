@@ -61,6 +61,10 @@ pub struct MaskJobParams {
     pub sam3_multirep: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub carve: Option<bool>,
+    // `box` is a Rust keyword, hence the rename; the gateway's mask_points tool
+    // expects a plain `box` field ([x0, y0, x1, y1] in payload/unoriented space).
+    #[serde(rename = "box", skip_serializing_if = "Option::is_none")]
+    pub box_: Option<[f64; 4]>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -111,6 +115,24 @@ pub fn unorient_point(
         3 => (oriented_h - y_unflipped, x_unflipped),
         _ => unreachable!(),
     }
+}
+
+/// Un-orient a box `[x0, y0, x1, y1]` from ORIENTED display space into coarse-
+/// UNROTATED payload space, by un-orienting both corners via [`unorient_point`]
+/// and then re-ordering to (min, max) per axis: a 90/270-degree rotation (or a
+/// flip) can swap which transformed corner ends up smaller on a given axis, so
+/// naively transforming corner-for-corner would produce an inverted box.
+pub fn unorient_box(
+    box_: [f64; 4],
+    oriented_w: f64,
+    oriented_h: f64,
+    steps: u8,
+    flip_h: bool,
+    flip_v: bool,
+) -> [f64; 4] {
+    let (x0, y0) = unorient_point(box_[0], box_[1], oriented_w, oriented_h, steps, flip_h, flip_v);
+    let (x1, y1) = unorient_point(box_[2], box_[3], oriented_w, oriented_h, steps, flip_h, flip_v);
+    [x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)]
 }
 
 /// Un-orient an ROI mask PNG from ORIENTED display space into coarse-UNROTATED
@@ -327,6 +349,11 @@ pub struct RemoteMaskRequest {
     pub agentic: Option<bool>,
     pub sam3_multirep: Option<bool>,
     pub carve: Option<bool>,
+    // `box` arrives from the frontend as plain camelCase "box" (already valid
+    // camelCase, no rename needed on this side — only the Rust-keyword-named
+    // field requires `#[serde(rename)]`, which is on `box_` itself).
+    #[serde(rename = "box")]
+    pub box_: Option<[f64; 4]>,
     pub rotation: f32,
     pub flip_horizontal: bool,
     pub flip_vertical: bool,
@@ -526,6 +553,17 @@ pub async fn generate_remote_ai_mask(
         request.roi_mask_b64.clone()
     };
 
+    let unoriented_box = request.box_.map(|b| {
+        unorient_box(
+            b,
+            oriented_w,
+            oriented_h,
+            request.orientation_steps,
+            request.flip_horizontal,
+            request.flip_vertical,
+        )
+    });
+
     // ---- enqueue (with single transparent retry on 410 Gone) ----
     let params = MaskJobParams {
         mode: request.mode.clone(),
@@ -541,6 +579,7 @@ pub async fn generate_remote_ai_mask(
         backend: settings.remote_mask_backend.clone(),
         sam3_multirep: request.sam3_multirep,
         carve: request.carve,
+        box_: unoriented_box,
     };
 
     async fn submit_job(
@@ -775,6 +814,7 @@ mod tests {
             backend: Some("sam2".into()),
             sam3_multirep: None,
             carve: None,
+            box_: None,
         };
         let v = serde_json::to_value(&req).unwrap();
         assert_eq!(v["mode"], "prompt");
@@ -783,6 +823,7 @@ mod tests {
         assert!(v.get("points").is_none());
         assert!(v.get("roi_mask_b64").is_none());
         assert!(v.get("preset").is_none());
+        assert!(v.get("box").is_none());
     }
 
     #[test]
@@ -810,12 +851,14 @@ mod tests {
             backend: None,
             sam3_multirep: None,
             carve: None,
+            box_: None,
         };
         let v = serde_json::to_value(&req).unwrap();
         assert!(v.get("sam3_multirep").is_none());
         assert!(v.get("agentic").is_none());
         assert!(v.get("backend").is_none());
         assert!(v.get("carve").is_none());
+        assert!(v.get("box").is_none());
     }
 
     #[test]
@@ -830,11 +873,31 @@ mod tests {
             backend: Some("sam3".into()),
             sam3_multirep: Some(true),
             carve: Some(true),
+            box_: None,
         };
         let v = serde_json::to_value(&req).unwrap();
         assert_eq!(v["sam3_multirep"], true);
         assert_eq!(v["backend"], "sam3");
         assert_eq!(v["carve"], true);
+    }
+
+    #[test]
+    fn mask_request_serializes_box_field_as_plain_box() {
+        let req = MaskJobParams {
+            mode: "box".into(),
+            query: None,
+            points: None,
+            roi_mask_b64: None,
+            preset: None,
+            agentic: Some(false),
+            backend: None,
+            sam3_multirep: None,
+            carve: None,
+            box_: Some([10.0, 20.0, 300.0, 400.0]),
+        };
+        let v = serde_json::to_value(&req).unwrap();
+        assert_eq!(v["mode"], "box");
+        assert_eq!(v["box"], serde_json::json!([10.0, 20.0, 300.0, 400.0]));
     }
 
     #[test]
@@ -885,6 +948,33 @@ mod tests {
         assert!(req.roi_mask_b64.is_none());
         assert!(req.sam3_multirep.is_none());
         assert!(req.carve.is_none());
+        // "box" isn't even present in the JSON above; Option fields must still
+        // deserialize to None when the key is absent (not just when null).
+        assert!(req.box_.is_none());
+    }
+
+    #[test]
+    fn remote_mask_request_deserializes_camel_case_box_field() {
+        let json = serde_json::json!({
+            "subMaskId": "sm-1",
+            "path": "/tmp/photo.arw",
+            "mode": "box",
+            "query": null,
+            "points": null,
+            "roiMaskB64": null,
+            "preset": null,
+            "agentic": null,
+            "sam3Multirep": null,
+            "carve": null,
+            "box": [10.0, 20.0, 300.0, 400.0],
+            "rotation": 0.0,
+            "flipHorizontal": false,
+            "flipVertical": false,
+            "orientationSteps": 0,
+            "jsAdjustments": {}
+        });
+        let req: RemoteMaskRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.box_, Some([10.0, 20.0, 300.0, 400.0]));
     }
 
     #[test]
@@ -998,6 +1088,69 @@ mod tests {
                         "steps={steps} flip=({flip_h},{flip_v}) pt=({xo},{yo}): got ({ux},{uy}) want ({rx},{ry})"
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn unorient_box_is_noop_for_steps0_no_flip() {
+        let b = [10.0, 20.0, 300.0, 400.0];
+        let out = unorient_box(b, 6000.0, 4000.0, 0, false, false);
+        assert!((out[0] - 10.0).abs() < 1e-9);
+        assert!((out[1] - 20.0).abs() < 1e-9);
+        assert!((out[2] - 300.0).abs() < 1e-9);
+        assert!((out[3] - 400.0).abs() < 1e-9);
+    }
+
+    /// steps=1 is a 90-degree rotation: unoriented payload is 4000x6000
+    /// (portrait), oriented display is 6000x4000 (landscape). A rectangular
+    /// box's corners rotate to a DIFFERENT pair of corners in payload space,
+    /// so this pins both the exact transformed coordinates (via
+    /// `unorient_point`, already verified independently) AND that the min/max
+    /// re-ordering produces a valid (min <= max) box on both axes rather than
+    /// a corner-for-corner transform that could come out inverted.
+    #[test]
+    fn unorient_box_steps1_rectangular_case_transforms_and_reorders() {
+        let (ow, oh) = (6000.0, 4000.0);
+        // A box in oriented display space, NOT symmetric, so a naive
+        // corner-for-corner transform would visibly differ from min/max.
+        let b = [1000.0, 500.0, 5000.0, 3000.0];
+        let out = unorient_box(b, ow, oh, 1, false, false);
+
+        let (ex0, ey0) = unorient_point(b[0], b[1], ow, oh, 1, false, false);
+        let (ex1, ey1) = unorient_point(b[2], b[3], ow, oh, 1, false, false);
+        let expected = [ex0.min(ex1), ey0.min(ey1), ex0.max(ex1), ey0.max(ey1)];
+
+        assert!((out[0] - expected[0]).abs() < 1e-6);
+        assert!((out[1] - expected[1]).abs() < 1e-6);
+        assert!((out[2] - expected[2]).abs() < 1e-6);
+        assert!((out[3] - expected[3]).abs() < 1e-6);
+
+        // min/max ordering must hold regardless of how the rotation shuffled
+        // the corners.
+        assert!(out[0] <= out[2], "x0 {} must be <= x1 {}", out[0], out[2]);
+        assert!(out[1] <= out[3], "y0 {} must be <= y1 {}", out[1], out[3]);
+    }
+
+    #[test]
+    fn unorient_box_min_max_ordering_holds_for_all_steps_and_flips() {
+        let (ow, oh) = (6000.0, 4000.0);
+        let b = [1000.0, 500.0, 5000.0, 3000.0];
+        for steps in 0u8..4 {
+            for &(flip_h, flip_v) in &[(false, false), (true, false), (false, true), (true, true)] {
+                let out = unorient_box(b, ow, oh, steps, flip_h, flip_v);
+                assert!(
+                    out[0] <= out[2],
+                    "steps={steps} flip=({flip_h},{flip_v}): x0 {} must be <= x1 {}",
+                    out[0],
+                    out[2]
+                );
+                assert!(
+                    out[1] <= out[3],
+                    "steps={steps} flip=({flip_h},{flip_v}): y0 {} must be <= y1 {}",
+                    out[1],
+                    out[3]
+                );
             }
         }
     }

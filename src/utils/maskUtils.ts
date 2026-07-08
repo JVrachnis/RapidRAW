@@ -59,6 +59,8 @@ export const createSubMask = (
           preset: 'subject',
           agentic: false,
           carve: false,
+          box: null,
+          ellipse: null,
         },
       };
     default:

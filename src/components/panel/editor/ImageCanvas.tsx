@@ -678,6 +678,46 @@ const MaskOverlay = memo(
       );
     }
 
+    if (subMask.type === Mask.RemoteAi && p.mode === 'box') {
+      const box: Array<number> | undefined = Array.isArray(p.box) ? p.box : undefined;
+      if (!box || box.length !== 4) return null;
+      const [x0, y0, x1, y1] = box;
+      return (
+        <Rect
+          x={(Math.min(x0, x1) - cropX) * scale}
+          y={(Math.min(y0, y1) - cropY) * scale}
+          width={Math.max(0.1, Math.abs(x1 - x0) * scale)}
+          height={Math.max(0.1, Math.abs(y1 - y0) * scale)}
+          onMouseEnter={onMaskMouseEnter}
+          onMouseLeave={onMaskMouseLeave}
+          onTouchEnd={handleMaskTouchEnd}
+          onTouchStart={handleMaskTouchStart}
+          {...commonProps}
+        />
+      );
+    }
+
+    if (subMask.type === Mask.RemoteAi && p.mode === 'ellipse') {
+      const ellipse = p.ellipse;
+      if (!ellipse) return null;
+      const { centerX, centerY, radiusX, radiusY, rotation = 0 } = ellipse;
+      return (
+        <Ellipse
+          x={(centerX - cropX) * scale}
+          y={(centerY - cropY) * scale}
+          radiusX={Math.max(0.1, radiusX * scale)}
+          radiusY={Math.max(0.1, radiusY * scale)}
+          rotation={rotation}
+          fill="transparent"
+          onMouseEnter={onMaskMouseEnter}
+          onMouseLeave={onMaskMouseLeave}
+          onTouchEnd={handleMaskTouchEnd}
+          onTouchStart={handleMaskTouchStart}
+          {...commonProps}
+        />
+      );
+    }
+
     if (subMask.type === Mask.Radial) {
       const { centerX, centerY, radiusX, radiusY, rotation } = p;
       if (p.isInitialDraw && (radiusX < 1 || radiusY < 2)) return null;
@@ -1080,6 +1120,16 @@ const ImageCanvas = memo(
     const currentLine = useRef<DrawnLine | null>(null);
     const previewBoxRef = useRef<{ start: Coord; end: Coord } | null>(null);
     const [previewBox, setPreviewBox] = useState<{ start: Coord; end: Coord } | null>(null);
+    // Drag-box capture for remote-ai "box" mode: same stage-space start/end
+    // shape as previewBox (AiSubject's drag-box), reused for identical UX and
+    // coordinate-transform plumbing on mouseUp.
+    const previewRemoteBoxRef = useRef<{ start: Coord; end: Coord } | null>(null);
+    const [previewRemoteBox, setPreviewRemoteBox] = useState<{ start: Coord; end: Coord } | null>(null);
+    // Drag-ellipse capture for remote-ai "ellipse" mode: stage-space start/end
+    // rect, converted to a full-image-space {centerX, centerY, radiusX,
+    // radiusY} on mouseUp (mirrors the native Radial mask's drag conventions).
+    const previewEllipseRef = useRef<{ start: Coord; end: Coord } | null>(null);
+    const [previewEllipse, setPreviewEllipse] = useState<{ start: Coord; end: Coord } | null>(null);
 
     const [cursorPreview, setCursorPreview] = useState<CursorPreview>({ x: 0, y: 0, visible: false });
     const [straightenLine, setStraightenLine] = useState<any>(null);
@@ -1271,6 +1321,14 @@ const ImageCanvas = memo(
       (isMasking || isAiEditing) &&
       activeSubMask?.type === Mask.RemoteAi &&
       (activeSubMask?.parameters?.mode ?? 'prompt') === 'points';
+    const isRemoteAiBoxActive =
+      (isMasking || isAiEditing) &&
+      activeSubMask?.type === Mask.RemoteAi &&
+      activeSubMask?.parameters?.mode === 'box';
+    const isRemoteAiEllipseActive =
+      (isMasking || isAiEditing) &&
+      activeSubMask?.type === Mask.RemoteAi &&
+      activeSubMask?.parameters?.mode === 'ellipse';
     const isBrushActive =
       (isMasking || isAiEditing) &&
       (activeSubMask?.type === Mask.Brush || activeSubMask?.type === Mask.Flow || isRemoteAiPaintActive);
@@ -1335,7 +1393,13 @@ const ImageCanvas = memo(
     const isInitialDrawing = (isMasking || isAiEditing) && activeSubMask?.parameters?.isInitialDraw === true;
 
     const isToolActive =
-      isBrushActive || isAiSubjectActive || isInitialDrawing || isParametricActive || isRemoteAiPointsActive;
+      isBrushActive ||
+      isAiSubjectActive ||
+      isInitialDrawing ||
+      isParametricActive ||
+      isRemoteAiPointsActive ||
+      isRemoteAiBoxActive ||
+      isRemoteAiEllipseActive;
 
     useEffect(() => {
       if (maskOverlayUrl && (isMasking || isAiEditing)) {
@@ -1356,6 +1420,10 @@ const ImageCanvas = memo(
       lastBrushPoint.current = null;
       setPreviewBox(null);
       previewBoxRef.current = null;
+      setPreviewRemoteBox(null);
+      previewRemoteBoxRef.current = null;
+      setPreviewEllipse(null);
+      previewEllipseRef.current = null;
       setLocalInitialDrawParams(null);
     }, [isToolActive]);
 
@@ -1592,6 +1660,24 @@ const ImageCanvas = memo(
             return;
           }
 
+          if (isRemoteAiBoxActive) {
+            isDrawing.current = true;
+            drawingStageRef.current = stage;
+            const newBox = { start: pos, end: pos };
+            previewRemoteBoxRef.current = newBox;
+            setPreviewRemoteBox(newBox);
+            return;
+          }
+
+          if (isRemoteAiEllipseActive) {
+            isDrawing.current = true;
+            drawingStageRef.current = stage;
+            const newEllipse = { start: pos, end: pos };
+            previewEllipseRef.current = newEllipse;
+            setPreviewEllipse(newEllipse);
+            return;
+          }
+
           if (isRemoteAiPointsActive && activeSubMask) {
             const { scale } = imageRenderSize;
             const crop = adjustments.crop;
@@ -1706,6 +1792,8 @@ const ImageCanvas = memo(
         activeLineFlow,
         isAiSubjectActive,
         isRemoteAiPointsActive,
+        isRemoteAiBoxActive,
+        isRemoteAiEllipseActive,
         isParametricActive,
         brushSettings,
         onSelectMask,
@@ -1761,6 +1849,22 @@ const ImageCanvas = memo(
           const updatedBox = { ...previewBoxRef.current, end: pos };
           previewBoxRef.current = updatedBox;
           setPreviewBox(updatedBox);
+          if (e.evt && e.evt.cancelable) e.evt.preventDefault();
+          return;
+        }
+
+        if (isRemoteAiBoxActive && previewRemoteBoxRef.current && pos) {
+          const updatedBox = { ...previewRemoteBoxRef.current, end: pos };
+          previewRemoteBoxRef.current = updatedBox;
+          setPreviewRemoteBox(updatedBox);
+          if (e.evt && e.evt.cancelable) e.evt.preventDefault();
+          return;
+        }
+
+        if (isRemoteAiEllipseActive && previewEllipseRef.current && pos) {
+          const updatedEllipse = { ...previewEllipseRef.current, end: pos };
+          previewEllipseRef.current = updatedEllipse;
+          setPreviewEllipse(updatedEllipse);
           if (e.evt && e.evt.cancelable) e.evt.preventDefault();
           return;
         }
@@ -1916,6 +2020,8 @@ const ImageCanvas = memo(
         isBrushActive,
         activeLineFlow,
         isAiSubjectActive,
+        isRemoteAiBoxActive,
+        isRemoteAiEllipseActive,
         imageRenderSize,
         adjustments.crop,
         effectiveImageDimensions,
@@ -1960,7 +2066,94 @@ const ImageCanvas = memo(
         return;
       }
 
-      if (!currentLine.current && !(isAiSubjectActive && previewBoxRef.current)) {
+      if (
+        !currentLine.current &&
+        !(isAiSubjectActive && previewBoxRef.current) &&
+        !(isRemoteAiBoxActive && previewRemoteBoxRef.current) &&
+        !(isRemoteAiEllipseActive && previewEllipseRef.current)
+      ) {
+        return;
+      }
+
+      if (isRemoteAiBoxActive && previewRemoteBoxRef.current) {
+        const wasDrawing = isDrawing.current;
+        isDrawing.current = false;
+        const box = previewRemoteBoxRef.current;
+        previewRemoteBoxRef.current = null;
+        setPreviewRemoteBox(null);
+        drawingStageRef.current = null;
+
+        if (!wasDrawing || !box) {
+          return;
+        }
+
+        const { scale } = imageRenderSize;
+        const crop = adjustments.crop;
+        const isPercent = crop?.unit === '%';
+        const cropX = crop ? (isPercent ? (crop.x / 100) * effectiveImageDimensions.width : crop.x) : 0;
+        const cropY = crop ? (isPercent ? (crop.y / 100) * effectiveImageDimensions.height : crop.y) : 0;
+
+        const activeId = isMasking ? activeMaskId : activeAiSubMaskId;
+
+        const startPoint = { x: box.start.x / scale + cropX, y: box.start.y / scale + cropY };
+        const endPoint = { x: box.end.x / scale + cropX, y: box.end.y / scale + cropY };
+
+        // Store as [x0, y0, x1, y1] with min/max already resolved, matching
+        // the Rust `box_: Option<[f64; 4]>` contract (params.box = [...]).
+        const x0 = Math.min(startPoint.x, endPoint.x);
+        const y0 = Math.min(startPoint.y, endPoint.y);
+        const x1 = Math.max(startPoint.x, endPoint.x);
+        const y1 = Math.max(startPoint.y, endPoint.y);
+
+        if (activeId && x1 - x0 >= 1 && y1 - y0 >= 1) {
+          updateSubMask(activeId, {
+            parameters: {
+              ...activeSubMask?.parameters,
+              box: [x0, y0, x1, y1],
+            },
+          });
+        }
+        return;
+      }
+
+      if (isRemoteAiEllipseActive && previewEllipseRef.current) {
+        const wasDrawing = isDrawing.current;
+        isDrawing.current = false;
+        const drag = previewEllipseRef.current;
+        previewEllipseRef.current = null;
+        setPreviewEllipse(null);
+        drawingStageRef.current = null;
+
+        if (!wasDrawing || !drag) {
+          return;
+        }
+
+        const { scale } = imageRenderSize;
+        const crop = adjustments.crop;
+        const isPercent = crop?.unit === '%';
+        const cropX = crop ? (isPercent ? (crop.x / 100) * effectiveImageDimensions.width : crop.x) : 0;
+        const cropY = crop ? (isPercent ? (crop.y / 100) * effectiveImageDimensions.height : crop.y) : 0;
+
+        const activeId = isMasking ? activeMaskId : activeAiSubMaskId;
+
+        const startPoint = { x: drag.start.x / scale + cropX, y: drag.start.y / scale + cropY };
+        const endPoint = { x: drag.end.x / scale + cropX, y: drag.end.y / scale + cropY };
+
+        // Center + radii from the drag rect, mirroring the native Radial
+        // mask's drag conventions (see isInitialDrawing above).
+        const centerX = (startPoint.x + endPoint.x) / 2;
+        const centerY = (startPoint.y + endPoint.y) / 2;
+        const radiusX = Math.abs(endPoint.x - startPoint.x) / 2;
+        const radiusY = Math.abs(endPoint.y - startPoint.y) / 2;
+
+        if (activeId && radiusX >= 1 && radiusY >= 1) {
+          updateSubMask(activeId, {
+            parameters: {
+              ...activeSubMask?.parameters,
+              ellipse: { centerX, centerY, radiusX, radiusY, rotation: 0 },
+            },
+          });
+        }
         return;
       }
 
@@ -2077,6 +2270,8 @@ const ImageCanvas = memo(
       imageRenderSize.scale,
       isAiEditing,
       isBrushActive,
+      isRemoteAiBoxActive,
+      isRemoteAiEllipseActive,
       activeLineFlow,
       isMasking,
       onGenerateAiMask,
@@ -2298,6 +2493,8 @@ const ImageCanvas = memo(
       if (isBrushActive) return 'none';
       if (isAiSubjectActive) return 'crosshair';
       if (isRemoteAiPointsActive) return 'crosshair';
+      if (isRemoteAiBoxActive) return 'crosshair';
+      if (isRemoteAiEllipseActive) return 'crosshair';
       return cursorStyle;
     }, [
       isWbPickerActive,
@@ -2305,6 +2502,8 @@ const ImageCanvas = memo(
       isBrushActive,
       isAiSubjectActive,
       isRemoteAiPointsActive,
+      isRemoteAiBoxActive,
+      isRemoteAiEllipseActive,
       isParametricActive,
       cursorStyle,
     ]);
@@ -2545,6 +2744,30 @@ const ImageCanvas = memo(
                           y={Math.min(previewBox.start.y, previewBox.end.y)}
                           width={Math.max(0.1, Math.abs(previewBox.end.x - previewBox.start.x))}
                           height={Math.max(0.1, Math.abs(previewBox.end.y - previewBox.start.y))}
+                          stroke="#0ea5e9"
+                          strokeWidth={2}
+                          dash={[4, 4]}
+                          listening={false}
+                        />
+                      )}
+                      {previewRemoteBox && (
+                        <Rect
+                          x={Math.min(previewRemoteBox.start.x, previewRemoteBox.end.x)}
+                          y={Math.min(previewRemoteBox.start.y, previewRemoteBox.end.y)}
+                          width={Math.max(0.1, Math.abs(previewRemoteBox.end.x - previewRemoteBox.start.x))}
+                          height={Math.max(0.1, Math.abs(previewRemoteBox.end.y - previewRemoteBox.start.y))}
+                          stroke="#0ea5e9"
+                          strokeWidth={2}
+                          dash={[4, 4]}
+                          listening={false}
+                        />
+                      )}
+                      {previewEllipse && (
+                        <Ellipse
+                          x={(previewEllipse.start.x + previewEllipse.end.x) / 2}
+                          y={(previewEllipse.start.y + previewEllipse.end.y) / 2}
+                          radiusX={Math.max(0.1, Math.abs(previewEllipse.end.x - previewEllipse.start.x) / 2)}
+                          radiusY={Math.max(0.1, Math.abs(previewEllipse.end.y - previewEllipse.start.y) / 2)}
                           stroke="#0ea5e9"
                           strokeWidth={2}
                           dash={[4, 4]}

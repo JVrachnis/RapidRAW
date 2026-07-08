@@ -28,7 +28,7 @@ interface RemoteMaskStatusEventPayload {
 }
 
 export interface GenerateRemoteAiMaskOptions {
-  mode: 'prompt' | 'points' | 'paint' | 'preset';
+  mode: 'prompt' | 'points' | 'paint' | 'preset' | 'box';
   query?: string;
   points?: Array<[number, number, number]>;
   roiMaskB64?: string;
@@ -36,6 +36,7 @@ export interface GenerateRemoteAiMaskOptions {
   agentic?: boolean;
   sam3Multirep?: boolean;
   carve?: boolean | null;
+  box?: [number, number, number, number] | null;
 }
 
 /**
@@ -136,6 +137,7 @@ export function useRemoteAiMasking() {
             agentic: options.agentic,
             sam3Multirep: options.sam3Multirep,
             carve: options.carve ?? null,
+            box: options.box ?? null,
             rotation: adjustments.rotation,
             flipHorizontal: adjustments.flipHorizontal,
             flipVertical: adjustments.flipVertical,
@@ -182,6 +184,8 @@ export function useRemoteAiMasking() {
         const errorStr = String(error);
         if (errorStr.includes('comfyui_down')) {
           toast.error(i18n.t('masks.remote.comfyDown'));
+        } else if (errorStr.includes('gpu_oom')) {
+          toast.error(i18n.t('masks.remote.gpuOom'));
         } else {
           toast.error(`Remote AI Mask Failed: ${error}`);
         }
