@@ -77,12 +77,14 @@ export enum Invokes {
   InvokeGenerativeReplaseWithMaskDef = 'invoke_generative_replace_with_mask_def',
   ListImagesInDir = 'list_images_in_dir',
   ListImagesRecursive = 'list_images_recursive',
+  ListPlugins = 'list_plugins',
   LoadImage = 'load_image',
   LoadMetadata = 'load_metadata',
   LoadPresets = 'load_presets',
   LoadSettings = 'load_settings',
   MoveFiles = 'move_files',
   ReadExifForPaths = 'read_exif_for_paths',
+  ReadPluginEntry = 'read_plugin_entry',
   RemoveTagForPaths = 'remove_tag_for_paths',
   RenameFiles = 'rename_files',
   RenameFolder = 'rename_folder',
@@ -213,6 +215,9 @@ export interface AppSettings {
   exifOverlay?: ExifOverlay;
   language?: string;
   folderTreeSort?: FolderTreeSort;
+  remoteMaskAddress?: string;
+  pluginsEnabled?: boolean;
+  disabledPlugins?: string[];
 }
 
 export interface BrushSettings {

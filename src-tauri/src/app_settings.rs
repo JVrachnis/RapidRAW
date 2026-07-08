@@ -324,6 +324,14 @@ pub fn default_open_tree_sections() -> Vec<String> {
     vec!["current".to_string()]
 }
 
+pub fn default_plugins_enabled() -> Option<bool> {
+    Some(true)
+}
+
+pub fn default_disabled_plugins() -> Option<Vec<String>> {
+    Some(Vec::new())
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -444,6 +452,10 @@ pub struct AppSettings {
     pub language: Option<String>,
     #[serde(default)]
     pub folder_tree_sort: Option<FolderTreeSort>,
+    #[serde(default = "default_plugins_enabled")]
+    pub plugins_enabled: Option<bool>,
+    #[serde(default = "default_disabled_plugins")]
+    pub disabled_plugins: Option<Vec<String>>,
 }
 
 impl Default for AppSettings {
@@ -535,6 +547,8 @@ impl Default for AppSettings {
             exif_overlay: Some("off".to_string()),
             language: Some("en".to_string()),
             folder_tree_sort: Some(FolderTreeSort::default()),
+            plugins_enabled: default_plugins_enabled(),
+            disabled_plugins: default_disabled_plugins(),
         }
     }
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useShallow } from 'zustand/react/shallow';
+import { loadPlugins } from '../plugins/loader';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { useUIStore } from '../store/useUIStore';
 import { useLibraryStore } from '../store/useLibraryStore';
@@ -150,6 +151,10 @@ export const useAppInitialization = ({
 
         setAppSettings(settings);
         i18n.changeLanguage(settings.language);
+
+        loadPlugins(settings, () => useSettingsStore.getState().appSettings).catch((err) =>
+          console.error('[plugins] loadPlugins failed unexpectedly:', err),
+        );
 
         if (settings?.sortCriteria) setSortCriteria(settings.sortCriteria);
 

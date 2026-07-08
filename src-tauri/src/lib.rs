@@ -29,6 +29,7 @@ mod mask_generation;
 mod negative_conversion;
 mod panorama_stitching;
 mod panorama_utils;
+mod plugins;
 mod preset_converter;
 mod raw_processing;
 mod remote_masking;
@@ -2324,6 +2325,8 @@ pub fn run() {
             lens_correction::get_lens_distortion_params,
             negative_conversion::preview_negative_conversion,
             negative_conversion::convert_negatives,
+            plugins::list_plugins,
+            plugins::read_plugin_entry,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
