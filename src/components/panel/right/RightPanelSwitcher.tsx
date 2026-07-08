@@ -7,10 +7,12 @@ import {
   Paintbrush,
   SwatchBook,
   FileInput,
+  Puzzle,
   type LucideIcon,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Panel } from '../../ui/AppProperties';
+import { usePluginRegistry } from '../../../plugins/registry';
 
 interface PanelOptions {
   icon: LucideIcon;
@@ -25,7 +27,7 @@ interface RightPanelSwitcherProps {
   layout?: 'horizontal' | 'vertical';
 }
 
-const panelGroups: Array<Array<PanelOptions>> = [
+const BASE_PANEL_GROUPS: Array<Array<PanelOptions>> = [
   [{ id: Panel.Metadata, icon: Info, title: 'editor.switcher.tooltips.info' }],
   [
     { id: Panel.Adjustments, icon: SlidersHorizontal, title: 'editor.switcher.tooltips.adjust' },
@@ -47,6 +49,15 @@ export default function RightPanelSwitcher({
 }: RightPanelSwitcherProps) {
   const { t } = useTranslation();
   const isHorizontal = layout === 'horizontal';
+  const hasPluginPanels = usePluginRegistry((state) => state.panels.length > 0);
+
+  // Plugins get exactly one entry here, appended as its own group at the
+  // bottom of the switcher, and only once at least one plugin panel is
+  // actually registered - an empty "Plugins" icon that opens nothing would
+  // just be clutter.
+  const panelGroups = hasPluginPanels
+    ? [...BASE_PANEL_GROUPS, [{ id: Panel.Plugins, icon: Puzzle, title: 'editor.switcher.tooltips.plugins' }]]
+    : BASE_PANEL_GROUPS;
 
   return (
     <div className={isHorizontal ? 'flex items-center overflow-x-auto p-1 gap-1' : 'flex flex-col p-1 gap-1 h-full'}>

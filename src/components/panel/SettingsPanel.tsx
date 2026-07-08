@@ -18,12 +18,18 @@ import {
   Image as ImageIcon,
   Mouse,
   Touchpad,
+  Puzzle,
+  RefreshCw,
+  FolderOpen,
+  Download,
+  AlertTriangle,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { relaunch } from '@tauri-apps/plugin-process';
 import { motion, AnimatePresence } from 'framer-motion';
 import clsx from 'clsx';
+import { toast } from 'react-toastify';
 import { Show, SignIn, useUser, useAuth, useClerk } from '@clerk/react';
 import Button from '../ui/Button';
 import ConfirmModal from '../modals/ConfirmModal';
@@ -45,6 +51,9 @@ import Text from '../ui/Text';
 import { TextColors, TextVariants, TextWeights } from '../../types/typography';
 import { useOsPlatform } from '../../hooks/useOsPlatform';
 import { open } from '@tauri-apps/plugin-shell';
+import { useSettingsStore } from '../../store/useSettingsStore';
+import { reloadPlugins } from '../../plugins/loader';
+import type { PluginManifest } from '../../plugins/types';
 
 interface ConfirmModalState {
   confirmText: string;
@@ -693,6 +702,76 @@ export default function SettingsPanel({
   useEffect(() => {
     invoke<string[]>('get_lensfun_makers').then(setLensMakers).catch(console.error);
   }, []);
+
+  const [discoveredPlugins, setDiscoveredPlugins] = useState<PluginManifest[]>([]);
+  const [isLoadingPlugins, setIsLoadingPlugins] = useState(true);
+  const [isReloadingPlugins, setIsReloadingPlugins] = useState(false);
+  const [isInstallingExamplePlugins, setIsInstallingExamplePlugins] = useState(false);
+
+  const refreshDiscoveredPlugins = async () => {
+    setIsLoadingPlugins(true);
+    try {
+      const manifests = await invoke<PluginManifest[]>(Invokes.ListPlugins);
+      setDiscoveredPlugins(manifests);
+    } catch (error) {
+      console.error('Failed to list plugins:', error);
+    } finally {
+      setIsLoadingPlugins(false);
+    }
+  };
+
+  useEffect(() => {
+    refreshDiscoveredPlugins();
+  }, []);
+
+  const getLiveAppSettings = () => useSettingsStore.getState().appSettings;
+
+  const handleTogglePluginsEnabled = async (checked: boolean) => {
+    await onSettingsChange({ ...appSettings, pluginsEnabled: checked });
+    await reloadPlugins(getLiveAppSettings(), getLiveAppSettings);
+  };
+
+  const handleTogglePluginEnabled = async (pluginId: string, enabled: boolean) => {
+    const currentDisabled: string[] = appSettings?.disabledPlugins || [];
+    const nextDisabled = enabled ? currentDisabled.filter((id: string) => id !== pluginId) : [...currentDisabled, pluginId];
+    await onSettingsChange({ ...appSettings, disabledPlugins: nextDisabled });
+    await reloadPlugins(getLiveAppSettings(), getLiveAppSettings);
+  };
+
+  const handleReloadPlugins = async () => {
+    setIsReloadingPlugins(true);
+    try {
+      await reloadPlugins(getLiveAppSettings(), getLiveAppSettings);
+      await refreshDiscoveredPlugins();
+      toast.success(t('settings.plugins.reloadSuccess'));
+    } catch (error) {
+      toast.error(t('settings.plugins.reloadFailed', { err: error }));
+    } finally {
+      setIsReloadingPlugins(false);
+    }
+  };
+
+  const handleOpenPluginsFolder = async () => {
+    try {
+      await invoke(Invokes.OpenPluginsDir);
+    } catch (error) {
+      toast.error(t('settings.plugins.openFolderFailed', { err: error }));
+    }
+  };
+
+  const handleInstallExamplePlugins = async () => {
+    setIsInstallingExamplePlugins(true);
+    try {
+      const installedIds = await invoke<string[]>(Invokes.InstallExamplePlugins);
+      await refreshDiscoveredPlugins();
+      await reloadPlugins(getLiveAppSettings(), getLiveAppSettings);
+      toast.success(t('settings.plugins.installSuccess', { ids: installedIds.join(', ') }));
+    } catch (error) {
+      toast.error(t('settings.plugins.installFailed', { err: error }));
+    } finally {
+      setIsInstallingExamplePlugins(false);
+    }
+  };
 
   const handleProcessingSettingChange = async (key: string, value: any) => {
     setProcessingSettings((prev) => ({ ...prev, [key]: value }));
@@ -2337,6 +2416,94 @@ export default function SettingsPanel({
                         </motion.div>
                       )}
                     </AnimatePresence>
+                  </div>
+                </div>
+
+                <div className="p-6 bg-surface rounded-xl shadow-md">
+                  <div className="flex items-center gap-2 mb-8">
+                    <Puzzle size={20} className="text-accent" />
+                    <Text variant={TextVariants.title} color={TextColors.accent}>
+                      {t('settings.plugins.title')}
+                    </Text>
+                  </div>
+                  <Text className="mb-6">{t('settings.plugins.description')}</Text>
+
+                  <div className="space-y-8">
+                    <SettingItem label={t('settings.plugins.enable')} description={t('settings.plugins.enableDesc')}>
+                      <Switch
+                        checked={appSettings?.pluginsEnabled ?? true}
+                        id="plugins-enabled-toggle"
+                        label={t('settings.plugins.enable')}
+                        onChange={handleTogglePluginsEnabled}
+                      />
+                    </SettingItem>
+
+                    <div className="flex flex-wrap gap-3">
+                      <Button onClick={handleReloadPlugins} disabled={isReloadingPlugins}>
+                        <RefreshCw size={16} className={clsx(isReloadingPlugins && 'animate-spin')} />
+                        {t('settings.plugins.reload')}
+                      </Button>
+                      <Button className="bg-surface" onClick={handleOpenPluginsFolder}>
+                        <FolderOpen size={16} />
+                        {t('settings.plugins.openFolder')}
+                      </Button>
+                      <Button
+                        className="bg-surface"
+                        onClick={handleInstallExamplePlugins}
+                        disabled={isInstallingExamplePlugins}
+                      >
+                        <Download size={16} />
+                        {isInstallingExamplePlugins
+                          ? t('settings.plugins.installing')
+                          : t('settings.plugins.installExamples')}
+                      </Button>
+                    </div>
+
+                    <div>
+                      <Text variant={TextVariants.heading} className="mb-3">
+                        {t('settings.plugins.discovered')}
+                      </Text>
+                      {isLoadingPlugins ? (
+                        <Text variant={TextVariants.small}>{t('settings.data.loading')}</Text>
+                      ) : discoveredPlugins.length === 0 ? (
+                        <Text variant={TextVariants.small} className="text-text-secondary">
+                          {t('settings.plugins.none')}
+                        </Text>
+                      ) : (
+                        <div className="space-y-3">
+                          {discoveredPlugins.map((plugin) => {
+                            const isEnabled = !(appSettings?.disabledPlugins || []).includes(plugin.id);
+                            return (
+                              <div
+                                key={plugin.id}
+                                className="p-4 bg-bg-primary rounded-md border border-border-color"
+                              >
+                                <Switch
+                                  checked={!plugin.error && isEnabled}
+                                  disabled={!!plugin.error}
+                                  id={`plugin-enable-${plugin.id}`}
+                                  label={`${plugin.name || plugin.id}${plugin.version ? ` (v${plugin.version})` : ''}`}
+                                  onChange={(checked: boolean) => handleTogglePluginEnabled(plugin.id, checked)}
+                                />
+                                {plugin.description && (
+                                  <Text variant={TextVariants.small} className="mt-2 text-text-secondary">
+                                    {plugin.description}
+                                  </Text>
+                                )}
+                                {plugin.error && (
+                                  <div className="mt-2 flex items-start gap-1">
+                                    <AlertTriangle size={14} className="text-red-400 shrink-0 mt-0.5" />
+                                    <Text variant={TextVariants.small} color={TextColors.error}>
+                                      {plugin.error}
+                                    </Text>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 

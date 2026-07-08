@@ -1,0 +1,8 @@
+{
+  "id": "gateway-mask-tools",
+  "name": "Gateway Mask Tools",
+  "version": "1.0.0",
+  "entry": "index.js",
+  "surfaces": ["panel"],
+  "description": "Reference panel: read-only summary of the active AI (Remote) mask's pipeline mode/agentic/carve, toggles for multi-rep and agentic mode, and a gateway health check."
+}

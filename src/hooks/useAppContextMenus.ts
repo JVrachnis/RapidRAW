@@ -41,6 +41,7 @@ import {
   Briefcase,
   User,
   Album as AlbumIcon,
+  Puzzle,
 } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { useTranslation } from 'react-i18next';
@@ -56,6 +57,7 @@ import TaggingSubMenu from '../context/TaggingSubMenu';
 import { useEditorActions } from './useEditorActions';
 import { useLibraryActions } from './useLibraryActions';
 import { globalImageCache } from '../utils/ImageLRUCache';
+import { usePluginRegistry } from '../plugins/registry';
 
 export interface UseAppContextMenusProps {
   handleImageSelect: (path: string) => void;
@@ -330,6 +332,7 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
       const { appSettings } = useSettingsStore.getState();
       const { setUI, setRightPanel } = useUIStore.getState();
       const { setProcess } = useProcessStore.getState();
+      const { libraryActions: pluginLibraryActions } = usePluginRegistry.getState();
 
       const isTargetInSelection = multiSelectedPaths.includes(path);
       let finalSelection: string[];
@@ -759,6 +762,25 @@ export function useAppContextMenus(props: UseAppContextMenusProps) {
           isDestructive: true,
           submenu: deleteSubmenu,
         },
+        ...(pluginLibraryActions.length > 0
+          ? [
+              { type: OPTION_SEPARATOR },
+              {
+                label: t('contextMenus.thumbnail.plugins'),
+                icon: Puzzle,
+                submenu: pluginLibraryActions.map((action) => ({
+                  label: action.title,
+                  onClick: async () => {
+                    try {
+                      await action.onRun(finalSelection);
+                    } catch (err) {
+                      toast.error(t('contextMenus.toasts.pluginActionFailed', { title: action.title, err }));
+                    }
+                  },
+                })),
+              },
+            ]
+          : []),
       ];
       showContextMenu(event.clientX, event.clientY, options);
     },

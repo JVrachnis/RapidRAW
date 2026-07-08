@@ -1,0 +1,8 @@
+{
+  "id": "exif-auto-preset",
+  "name": "EXIF Auto Preset",
+  "version": "1.0.0",
+  "entry": "index.js",
+  "surfaces": ["library"],
+  "description": "Builds a per-image preset seeded from EXIF: lens correction maker/model, an exposure nudge from EV, and ISO-scaled noise reduction. Saves into an 'Auto (EXIF)' preset folder."
+}

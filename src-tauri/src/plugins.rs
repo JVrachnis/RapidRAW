@@ -218,6 +218,86 @@ pub fn read_plugin_entry(app_handle: AppHandle, plugin_id: String) -> Result<Str
     fs::read_to_string(&resolved).map_err(|e| format!("Cannot read plugin entry file: {}", e))
 }
 
+/// Opens the plugins directory in the OS file manager (Settings' "Open
+/// plugins folder" button). Mirrors `file_management::show_in_finder`'s
+/// per-OS dispatch, but opens the directory itself rather than selecting a
+/// file within it.
+#[tauri::command]
+pub fn open_plugins_dir(app_handle: AppHandle) -> Result<(), String> {
+    let dir = plugins_dir(&app_handle)?;
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(target_os = "android")]
+    {
+        return Err("Opening folders is not supported on Android.".to_string());
+    }
+
+    #[cfg(target_os = "ios")]
+    {
+        return Err("Opening folders is not supported on iOS.".to_string());
+    }
+
+    Ok(())
+}
+
+// Bundled in the binary via `include_str!` so the repo's `plugin-examples/`
+// sources are the single source of truth - "Install example plugins" just
+// copies these bytes onto disk, it never diverges from what ships in the repo.
+const EXIF_AUTO_PRESET_MANIFEST: &str = include_str!("../../plugin-examples/exif-auto-preset/plugin.json");
+const EXIF_AUTO_PRESET_ENTRY: &str = include_str!("../../plugin-examples/exif-auto-preset/index.js");
+const GATEWAY_MASK_TOOLS_MANIFEST: &str = include_str!("../../plugin-examples/gateway-mask-tools/plugin.json");
+const GATEWAY_MASK_TOOLS_ENTRY: &str = include_str!("../../plugin-examples/gateway-mask-tools/index.js");
+
+/// (dir name, plugin.json contents, index.js contents) for every bundled
+/// example plugin.
+const EXAMPLE_PLUGINS: &[(&str, &str, &str)] = &[
+    ("exif-auto-preset", EXIF_AUTO_PRESET_MANIFEST, EXIF_AUTO_PRESET_ENTRY),
+    ("gateway-mask-tools", GATEWAY_MASK_TOOLS_MANIFEST, GATEWAY_MASK_TOOLS_ENTRY),
+];
+
+/// Writes every bundled example plugin into `<app-data>/plugins/<id>/`,
+/// overwriting any existing copy. Returns the ids that were (re)installed.
+#[tauri::command]
+pub fn install_example_plugins(app_handle: AppHandle) -> Result<Vec<String>, String> {
+    let dir = plugins_dir(&app_handle)?;
+    let mut installed = Vec::new();
+
+    for (id, manifest, entry) in EXAMPLE_PLUGINS {
+        let plugin_dir = dir.join(id);
+        fs::create_dir_all(&plugin_dir).map_err(|e| format!("Failed to create {} directory: {}", id, e))?;
+        fs::write(plugin_dir.join("plugin.json"), manifest)
+            .map_err(|e| format!("Failed to write {}/plugin.json: {}", id, e))?;
+        fs::write(plugin_dir.join("index.js"), entry)
+            .map_err(|e| format!("Failed to write {}/index.js: {}", id, e))?;
+        installed.push(id.to_string());
+    }
+
+    Ok(installed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

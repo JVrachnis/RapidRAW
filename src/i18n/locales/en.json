@@ -252,6 +252,7 @@
       "pasteAdjustments_one": "Paste Adjustments",
       "pasteAdjustments_other": "Paste Adjustments to {{count}} Images",
       "physicalCopy": "Physical Copy",
+      "plugins": "Plugins",
       "removeFromAlbum_one": "Remove from Album",
       "removeFromAlbum_other": "Remove {{count}} Images from Album",
       "renameImage_one": "Rename Image",
@@ -275,7 +276,8 @@
       "failedMove": "Failed to move files: {{err}}",
       "failedMoveError": "Failed to move: {{err}}",
       "failedMoveInvalid": "Failed to move: Target group not found or invalid.",
-      "failedRemoveImages": "Failed to remove images: {{err}}"
+      "failedRemoveImages": "Failed to remove images: {{err}}",
+      "pluginActionFailed": "Plugin \"{{title}}\" failed: {{err}}"
     }
   },
   "editor": {
@@ -640,6 +642,10 @@
       },
       "title": "Metadata"
     },
+    "plugins": {
+      "empty": "No plugin panels are registered.",
+      "title": "Plugins"
+    },
     "presets": {
       "amount": "Amount",
       "dialog": {
@@ -696,6 +702,7 @@
         "info": "Info",
         "inpaint": "Inpaint",
         "masks": "Masks",
+        "plugins": "Plugins",
         "presets": "Presets"
       }
     },
@@ -1529,6 +1536,23 @@
       "removeTooltip": "Remove lens",
       "saved": "Saved Lenses",
       "title": "My Lenses"
+    },
+    "plugins": {
+      "description": "Extend RapidRAW with local JS plugins loaded from your plugins folder. Trusted, personal execution only - there is no sandboxing.",
+      "discovered": "Discovered Plugins",
+      "enable": "Enable plugins",
+      "enableDesc": "Master switch for the plugin system. Turning this off skips loading any plugin, without changing which individual plugins are enabled.",
+      "installExamples": "Install example plugins",
+      "installFailed": "Failed to install example plugins: {{err}}",
+      "installSuccess": "Installed example plugin(s): {{ids}}",
+      "installing": "Installing...",
+      "none": "No plugins found in the plugins folder.",
+      "openFolder": "Open plugins folder",
+      "openFolderFailed": "Failed to open plugins folder: {{err}}",
+      "reload": "Reload plugins",
+      "reloadFailed": "Failed to reload plugins: {{err}}",
+      "reloadSuccess": "Plugins reloaded.",
+      "title": "Plugins"
     },
     "processing": {
       "ai": {

@@ -2327,6 +2327,8 @@ pub fn run() {
             negative_conversion::convert_negatives,
             plugins::list_plugins,
             plugins::read_plugin_entry,
+            plugins::open_plugins_dir,
+            plugins::install_example_plugins,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

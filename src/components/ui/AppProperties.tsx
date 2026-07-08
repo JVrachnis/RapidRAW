@@ -73,6 +73,7 @@ export enum Invokes {
   HandleImportPresetsFromFile = 'handle_import_presets_from_file',
   HandleImportLegacyPresetsFromFile = 'handle_import_legacy_presets_from_file',
   ImportFiles = 'import_files',
+  InstallExamplePlugins = 'install_example_plugins',
   InvokeGenerativeReplace = 'invoke_generative_replace',
   InvokeGenerativeReplaseWithMaskDef = 'invoke_generative_replace_with_mask_def',
   ListImagesInDir = 'list_images_in_dir',
@@ -83,6 +84,7 @@ export enum Invokes {
   LoadPresets = 'load_presets',
   LoadSettings = 'load_settings',
   MoveFiles = 'move_files',
+  OpenPluginsDir = 'open_plugins_dir',
   ReadExifForPaths = 'read_exif_for_paths',
   ReadPluginEntry = 'read_plugin_entry',
   RemoveTagForPaths = 'remove_tag_for_paths',
@@ -128,6 +130,7 @@ export enum Panel {
   Export = 'export',
   Masks = 'masks',
   Metadata = 'metadata',
+  Plugins = 'plugins',
   Presets = 'presets',
 }
 
