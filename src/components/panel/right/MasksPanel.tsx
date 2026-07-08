@@ -2398,7 +2398,14 @@ function SettingsPanel({
     }
 
     if (mode === 'box') {
-      return { mode, box: params.box || null };
+      return {
+        mode,
+        box: params.box || null,
+        query: params.query || null,
+        agentic: params.agentic,
+        sam3Multirep: params.sam3Multirep,
+        carve: params.carve ?? null,
+      };
     }
 
     // Ellipse is client-side only: the gateway has no ellipse primitive, so

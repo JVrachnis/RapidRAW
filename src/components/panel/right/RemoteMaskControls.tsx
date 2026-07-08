@@ -40,6 +40,40 @@ export default function RemoteMaskControls({
   const labels: string[] = Array.isArray(params.labels) ? params.labels : [];
   const isBusy = !!status;
 
+  const sharedPipelineControls = (
+    <div className="space-y-3">
+      <Input
+        className="w-full"
+        disabled={isBusy}
+        onChange={(e: any) => onParametersChange({ query: e.target.value })}
+        onKeyDown={(e: any) => {
+          if (e.key === 'Enter') onGenerate();
+        }}
+        placeholder={t('masks.remote.prompt')}
+        type="text"
+        value={params.query || ''}
+      />
+      <Switch
+        checked={!!params.agentic}
+        label={t('masks.remote.agentic')}
+        onChange={(v) => onParametersChange({ agentic: v })}
+        disabled={isBusy}
+      />
+      <Switch
+        checked={!!params.carve}
+        label={t('masks.remote.carve')}
+        onChange={(v) => onParametersChange({ carve: v })}
+        disabled={isBusy}
+      />
+      <Switch
+        checked={!!params.sam3Multirep}
+        label={t('masks.remote.multirep')}
+        onChange={(v) => onParametersChange({ sam3Multirep: v })}
+        disabled={isBusy}
+      />
+    </div>
+  );
+
   const statusLine = (() => {
     if (!status) return null;
     switch (status.stage) {
@@ -71,41 +105,7 @@ export default function RemoteMaskControls({
         ))}
       </div>
 
-      {mode === 'prompt' && (
-        <div className="space-y-3">
-          <Input
-            className="w-full"
-            disabled={isBusy}
-            onChange={(e: any) => onParametersChange({ query: e.target.value })}
-            onKeyDown={(e: any) => {
-              if (e.key === 'Enter') onGenerate();
-            }}
-            placeholder={t('masks.remote.prompt')}
-            type="text"
-            value={params.query || ''}
-          />
-          <Switch
-            checked={!!params.agentic}
-            label={t('masks.remote.agentic')}
-            onChange={(v) => onParametersChange({ agentic: v })}
-            disabled={isBusy}
-          />
-          {params.agentic && (
-            <Switch
-              checked={!!params.carve}
-              label={t('masks.remote.carve')}
-              onChange={(v) => onParametersChange({ carve: v })}
-              disabled={isBusy}
-            />
-          )}
-          <Switch
-            checked={!!params.sam3Multirep}
-            label={t('masks.remote.multirep')}
-            onChange={(v) => onParametersChange({ sam3Multirep: v })}
-            disabled={isBusy}
-          />
-        </div>
-      )}
+      {mode === 'prompt' && sharedPipelineControls}
 
       {mode === 'preset' && (
         <div className="grid grid-cols-3 gap-2">
@@ -137,9 +137,12 @@ export default function RemoteMaskControls({
       )}
 
       {mode === 'box' && (
-        <Text variant={TextVariants.small} color={TextColors.secondary}>
-          {t('masks.remote.boxHint')}
-        </Text>
+        <div className="space-y-3">
+          <Text variant={TextVariants.small} color={TextColors.secondary}>
+            {t('masks.remote.boxHint')}
+          </Text>
+          {sharedPipelineControls}
+        </div>
       )}
 
       {mode === 'ellipse' && (
