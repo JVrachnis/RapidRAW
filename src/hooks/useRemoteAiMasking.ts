@@ -177,7 +177,12 @@ export function useRemoteAiMasking() {
           toast.info(i18n.t('masks.remote.found', { labels: newParameters.labels.join(', ') }));
         }
       } catch (error) {
-        toast.error(`Remote AI Mask Failed: ${error}`);
+        const errorStr = String(error);
+        if (errorStr.includes('comfyui_down')) {
+          toast.error(i18n.t('masks.remote.comfyDown'));
+        } else {
+          toast.error(`Remote AI Mask Failed: ${error}`);
+        }
       } finally {
         inFlight.current.delete(subMask.id);
         clearStatus(subMask.id);
