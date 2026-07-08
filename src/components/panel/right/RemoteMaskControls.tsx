@@ -83,6 +83,14 @@ export default function RemoteMaskControls({
             onChange={(v) => onParametersChange({ agentic: v })}
             disabled={isBusy}
           />
+          {params.agentic && (
+            <Switch
+              checked={!!params.carve}
+              label={t('masks.remote.carve')}
+              onChange={(v) => onParametersChange({ carve: v })}
+              disabled={isBusy}
+            />
+          )}
           <Switch
             checked={!!params.sam3Multirep}
             label={t('masks.remote.multirep')}

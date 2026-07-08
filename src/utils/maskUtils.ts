@@ -58,6 +58,7 @@ export const createSubMask = (
           points: [],
           preset: 'subject',
           agentic: false,
+          carve: false,
         },
       };
     default:

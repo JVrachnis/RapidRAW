@@ -59,6 +59,8 @@ pub struct MaskJobParams {
     pub backend: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sam3_multirep: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub carve: Option<bool>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -324,6 +326,7 @@ pub struct RemoteMaskRequest {
     pub preset: Option<String>,
     pub agentic: Option<bool>,
     pub sam3_multirep: Option<bool>,
+    pub carve: Option<bool>,
     pub rotation: f32,
     pub flip_horizontal: bool,
     pub flip_vertical: bool,
@@ -537,6 +540,7 @@ pub async fn generate_remote_ai_mask(
         ),
         backend: settings.remote_mask_backend.clone(),
         sam3_multirep: request.sam3_multirep,
+        carve: request.carve,
     };
 
     async fn submit_job(
@@ -770,6 +774,7 @@ mod tests {
             agentic: Some(false),
             backend: Some("sam2".into()),
             sam3_multirep: None,
+            carve: None,
         };
         let v = serde_json::to_value(&req).unwrap();
         assert_eq!(v["mode"], "prompt");
@@ -804,11 +809,13 @@ mod tests {
             agentic: None,
             backend: None,
             sam3_multirep: None,
+            carve: None,
         };
         let v = serde_json::to_value(&req).unwrap();
         assert!(v.get("sam3_multirep").is_none());
         assert!(v.get("agentic").is_none());
         assert!(v.get("backend").is_none());
+        assert!(v.get("carve").is_none());
     }
 
     #[test]
@@ -822,10 +829,12 @@ mod tests {
             agentic: Some(true),
             backend: Some("sam3".into()),
             sam3_multirep: Some(true),
+            carve: Some(true),
         };
         let v = serde_json::to_value(&req).unwrap();
         assert_eq!(v["sam3_multirep"], true);
         assert_eq!(v["backend"], "sam3");
+        assert_eq!(v["carve"], true);
     }
 
     #[test]
@@ -861,6 +870,7 @@ mod tests {
             "preset": null,
             "agentic": null,
             "sam3Multirep": null,
+            "carve": null,
             "rotation": 0.0,
             "flipHorizontal": false,
             "flipVertical": false,
@@ -874,6 +884,7 @@ mod tests {
         assert!(req.points.is_none());
         assert!(req.roi_mask_b64.is_none());
         assert!(req.sam3_multirep.is_none());
+        assert!(req.carve.is_none());
     }
 
     #[test]

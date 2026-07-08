@@ -1005,6 +1005,7 @@
       "agentic": "Agentic refine",
       "alignmentWarning": "Mask generated from the original RAW; alignment is best-effort. Switch payload to TIFF for exact alignment.",
       "cancel": "Cancel",
+      "carve": "Carve (see-through)",
       "comfyDown": "ComfyUI is not running on the backend — start it and try again.",
       "found": "Found: {{labels}}",
       "generate": "Generate",

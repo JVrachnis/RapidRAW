@@ -35,6 +35,7 @@ export interface GenerateRemoteAiMaskOptions {
   preset?: string;
   agentic?: boolean;
   sam3Multirep?: boolean;
+  carve?: boolean | null;
 }
 
 /**
@@ -134,6 +135,7 @@ export function useRemoteAiMasking() {
             preset: options.preset,
             agentic: options.agentic,
             sam3Multirep: options.sam3Multirep,
+            carve: options.carve ?? null,
             rotation: adjustments.rotation,
             flipHorizontal: adjustments.flipHorizontal,
             flipVertical: adjustments.flipVertical,

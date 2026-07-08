@@ -2356,7 +2356,13 @@ function SettingsPanel({
       return { mode, preset: params.preset || 'subject' };
     }
 
-    return { mode, query: params.query || '', agentic: params.agentic, sam3Multirep: params.sam3Multirep };
+    return {
+      mode,
+      query: params.query || '',
+      agentic: params.agentic,
+      sam3Multirep: params.sam3Multirep,
+      carve: params.carve ?? null,
+    };
   };
 
   const handleDepthRangeChange = (values: { minDepth: number; maxDepth: number; minFade: number; maxFade: number }) => {
