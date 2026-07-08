@@ -169,6 +169,18 @@ export default function RemoteMaskControls({
         </Text>
       )}
 
+      {!!params.carve && params.depthUsed === false && (
+        <Text
+          as="div"
+          variant={TextVariants.small}
+          color={TextColors.accent}
+          weight={TextWeights.medium}
+          className="p-3 bg-card-active rounded-md border border-surface"
+        >
+          {t('masks.remote.depthFallback')}
+        </Text>
+      )}
+
       {isBusy ? (
         <div className="flex items-center gap-2">
           <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-md bg-surface">

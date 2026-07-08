@@ -161,6 +161,7 @@ export function useRemoteAiMasking() {
           width,
           height,
           timings,
+          depthUsed,
         } = newParameters || {};
         const resultFields = {
           maskDataBase64,
@@ -173,6 +174,7 @@ export function useRemoteAiMasking() {
           width,
           height,
           timings,
+          depthUsed,
         };
         const mergedParameters = { ...(subMask.parameters || {}), ...resultFields };
         updateSubMask(subMask.id, { parameters: mergedParameters });

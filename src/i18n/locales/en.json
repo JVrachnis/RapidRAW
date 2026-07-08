@@ -1009,6 +1009,7 @@
       "cancel": "Cancel",
       "carve": "Carve (see-through)",
       "comfyDown": "ComfyUI is not running on the backend — start it and try again.",
+      "depthFallback": "Depth unavailable — carve ran in fallback mode; result may be rougher. Retry when the GPU is free.",
       "ellipse": "Ellipse",
       "ellipseHint": "Drag to draw an ellipse over the area on the image, then click Generate.",
       "found": "Found: {{labels}}",

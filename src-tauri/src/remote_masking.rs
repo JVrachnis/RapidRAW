@@ -78,6 +78,8 @@ pub struct GatewayMaskResult {
     pub alignment: String,
     #[serde(default)]
     pub timings: Value,
+    #[serde(default)]
+    pub depth_used: Option<bool>,
 }
 
 fn default_alignment() -> String {
@@ -703,6 +705,7 @@ pub async fn generate_remote_ai_mask(
                         "width": r.width,
                         "height": r.height,
                         "timings": r.timings,
+                        "depthUsed": r.depth_used,
                     }));
                 }
                 "cancelled" => {
@@ -837,6 +840,20 @@ mod tests {
         assert_eq!(r.width, 100);
         assert_eq!(r.alignment, "exact");
         assert_eq!(r.labels, vec!["person"]);
+        // The JSON above lacks "depth_used" entirely: missing-field tolerance
+        // must deserialize to None rather than erroring.
+        assert_eq!(r.depth_used, None);
+    }
+
+    #[test]
+    fn result_params_deserialize_depth_used_when_present() {
+        let json = serde_json::json!({
+            "mask_png_b64": "aGk=", "width": 100, "height": 60,
+            "labels": ["person"], "alignment": "exact",
+            "timings": {"total_s": 1.5}, "depth_used": true
+        });
+        let r: GatewayMaskResult = serde_json::from_value(json).unwrap();
+        assert_eq!(r.depth_used, Some(true));
     }
 
     #[test]
