@@ -204,6 +204,17 @@ pub fn resolve_entry_path(plugins_dir: &Path, plugin_id: &str, entry: &str) -> R
 pub fn read_plugin_entry(app_handle: AppHandle, plugin_id: String) -> Result<String, String> {
     let dir = plugins_dir(&app_handle)?;
 
+    // Validate the id BEFORE any filesystem access so a malicious id cannot
+    // even probe paths outside the plugins dir (defense in depth; the entry
+    // path itself is separately guarded by resolve_entry_path below).
+    if plugin_id.is_empty()
+        || plugin_id.contains("..")
+        || plugin_id.contains('/')
+        || plugin_id.contains('\\')
+    {
+        return Err("Invalid plugin id".to_string());
+    }
+
     let manifest_path = dir.join(&plugin_id).join("plugin.json");
     let content =
         fs::read_to_string(&manifest_path).map_err(|e| format!("Cannot read plugin manifest: {}", e))?;

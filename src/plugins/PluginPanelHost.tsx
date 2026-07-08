@@ -2,7 +2,7 @@
 // render function is untrusted-ish (see loader.ts) - a throw during render
 // must not take down the rest of the app, so it's isolated per-panel here
 // rather than at some higher, shared boundary.
-import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { Component, useMemo, type ErrorInfo, type ReactNode } from 'react';
 import { useSettingsStore } from '../store/useSettingsStore';
 import { makeApi } from './api';
 import type { PluginPanel, PluginPanelProps } from './types';
@@ -56,7 +56,12 @@ export default function PluginPanelHost({
 }: PluginPanelHostProps) {
   const appSettings = useSettingsStore((state) => state.appSettings ?? null);
   const PanelComponent = panel.component;
-  const api = makeApi(panel.pluginId, () => useSettingsStore.getState().appSettings ?? null);
+  // Stable across renders: plugin authors may legitimately put `api` in a
+  // useEffect dependency array; a fresh object per render would loop forever.
+  const api = useMemo(
+    () => makeApi(panel.pluginId, () => useSettingsStore.getState().appSettings ?? null),
+    [panel.pluginId],
+  );
 
   return (
     <PluginPanelErrorBoundary title={panel.title}>

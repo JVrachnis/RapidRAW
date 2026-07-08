@@ -90,7 +90,7 @@ function presetFromExif(exif, name) {
     temperature: parseTemperatureDelta(exif),
     tint: 0,
     colorNoiseReduction: noiseReduction,
-    luminanceNoiseReduction: Math.trunc(noiseReduction * 0.6),
+    lumaNoiseReduction: Math.trunc(noiseReduction * 0.6),
     clarity: 6,
     // Lensfun auto-correction seeded from EXIF, matching the Python original
     // field-for-field (it stashes the camera Make under "lensMaker", not the
@@ -121,7 +121,11 @@ function mergeIntoAutoExifFolder(existingPresets, newPresets) {
   const merged = existingPresets.map((item) => {
     if (item.folder && item.folder.name === AUTO_EXIF_FOLDER_NAME) {
       found = true;
-      return { folder: { ...item.folder, children: [...item.folder.children, ...newPresets] } };
+      // Upsert by preset name: re-running on the same photos updates in place
+      // instead of accumulating duplicates.
+      const newNames = new Set(newPresets.map((p) => p.name));
+      const kept = item.folder.children.filter((p) => !newNames.has(p.name));
+      return { folder: { ...item.folder, children: [...kept, ...newPresets] } };
     }
     return item;
   });
